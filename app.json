@@ -2,16 +2,20 @@
   "expo": {
     "name": "gi_lyd_selektor",
     "slug": "gi_lyd_selektor",
+    "scheme": "gilydselektor",
     "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "orientation": "landscape",
+    "icon": "./assets/images/selfportrait.jpg",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "This app needs access to the local network to detect devices."
+      }
     },
     "android": {
+      "supportsTablet": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
