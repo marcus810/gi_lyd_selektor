@@ -50,6 +50,10 @@ export const inputStyles = StyleSheet.create({
     },
 })
 
+export const getInfoViewPressableStyle = (isOn: boolean) => ({
+    backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(0,0,0,0.5)'
+  });
+
 export const outputStyles = StyleSheet.create({
     container:{
         flex: 5,
@@ -64,8 +68,7 @@ export const outputStyles = StyleSheet.create({
         flexBasis: 190
     },
     textContainer:{
-        /*  'hsla(133, 70.60%, 50.60%, 0.5)' for activation*/
-        backgroundColor: 'rgba(0,0,0,0.5)',
+
         borderColor: "black",
         borderLeftWidth: 2,
         borderRightWidth: 2,
@@ -75,7 +78,6 @@ export const outputStyles = StyleSheet.create({
     },
     imageContainer:{
         height: "80%",
-        backgroundColor: 'rgba(0,0,0,0.5)',
         borderColor: "black",
         borderWidth: 2,
     },

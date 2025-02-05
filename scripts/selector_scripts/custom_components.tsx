@@ -1,6 +1,6 @@
 import { View, Text, Image, Pressable, ImageSourcePropType, ViewStyle, TextStyle, ImageStyle, StyleProp, Dimensions} from 'react-native'
 import React, { useState } from 'react'
-
+import * as handler from '../../scripts/selector_scripts/handler'
 
 /* all components needs to be capitalised because they are custom react-native components 
 (not just for cleancode reasons, if it is uncapitalised it will throw an error)*/ 
@@ -55,6 +55,9 @@ import React, { useState } from 'react'
     textViewStyle: StyleProp<ViewStyle>
     imageStyle: StyleProp<ImageStyle>
     textStyle: StyleProp<TextStyle>
+    selectedStyle: Function
+    toggleState: boolean
+    setToggleState: React.Dispatch<React.SetStateAction<boolean>>
   }
   const SelektorInfoView = ({
     index, 
@@ -65,21 +68,27 @@ import React, { useState } from 'react'
     textViewStyle,
     imageStyle,
     textStyle,
+    selectedStyle,
+    toggleState,
+    setToggleState
     }: 
     SelektorInfoViewProps) =>
     {
+      
       return(
-        <View style={outerViewStyle}>
-          <View style={imageViewStyle}>
-            <Image source={imageProp} style={imageStyle}>
-            </Image>
-          </View>
 
-          <View style={textViewStyle}>
-            <Text style={textStyle}>{index.toString()}</Text>
-            <Text style={textStyle}>{name}</Text>
-          </View>
-        </View>
+          <Pressable style={outerViewStyle} onPress={() => handler.handlePress(toggleState, setToggleState)}>
+            <View style={[imageViewStyle, selectedStyle(toggleState)]}>
+              <Image source={imageProp} style={imageStyle}>
+              </Image>
+            </View>
+
+            <View style={[textViewStyle, selectedStyle(toggleState)]}>
+              <Text style={textStyle}>{index.toString()}</Text>
+              <Text style={textStyle}>{name}</Text>
+            </View>
+          </Pressable>
+
       )
     }
   
@@ -117,7 +126,12 @@ import React, { useState } from 'react'
     textViewStyle: StyleProp<ViewStyle>
     imageStyle: StyleProp<ImageStyle>
     textStyle: StyleProp<TextStyle>
+    selectedStyle: Function
     dataType: string
+  }
+  type InfoViewArr ={
+    component: JSX.Element; // Type for the component
+    tis: boolean;
   }
   export const getSelektorInfoViews = ({
     outerViewStyle,
@@ -125,6 +139,7 @@ import React, { useState } from 'react'
     textViewStyle,
     imageStyle,
     textStyle,
+    selectedStyle,
     dataType
     }: 
     GetSelektorInfoViews) => {
@@ -146,10 +161,19 @@ import React, { useState } from 'react'
         placeholderImage = require('@/assets/images/inputmic.png')
         
       }
-      const inputInfoViewArr = [];
-    
+      
+      const infoViewArr = []
+      const isOnArr= []
+
+
       for (let i = 1; i <= placeholderCount; i++) {
-        inputInfoViewArr.push(
+        const [isOn, setIsOn] = useState(false)
+
+        isOnArr.push(
+          setIsOn
+        )
+
+        infoViewArr.push(
           <SelektorInfoView
             key={i}
             index={i}
@@ -159,11 +183,14 @@ import React, { useState } from 'react'
             imageViewStyle={imageViewStyle}
             textViewStyle={textViewStyle}
             imageStyle={imageStyle}
-            textStyle={textStyle}>
-          </SelektorInfoView>
+            textStyle={textStyle}
+            selectedStyle={selectedStyle}
+            toggleState={isOn}
+            setToggleState={setIsOn}>
+          </SelektorInfoView>,
         )
       }
-      return inputInfoViewArr
+      return [infoViewArr, isOnArr] as const
     }
 
   
