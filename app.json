@@ -4,7 +4,6 @@
     "slug": "gi_lyd_selektor",
     "scheme": "gilydselektor",
     "version": "1.0.0",
-    "orientation": "landscape",
     "icon": "./assets/images/selfportrait.jpg",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
