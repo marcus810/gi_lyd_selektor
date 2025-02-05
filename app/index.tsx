@@ -1,9 +1,11 @@
 
 import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform} from 'react-native'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'expo-router'
 
 const index = () => {
+
+
    
   return (
     <SafeAreaView style={styles.safeContainer}>
@@ -33,6 +35,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
   titleContainer:{
     flex: 1,
@@ -49,7 +52,6 @@ const styles = StyleSheet.create({
     fontSize: 50,
     fontWeight: "bold",
     textAlign: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
     paddingTop: 40
   },
   button: {

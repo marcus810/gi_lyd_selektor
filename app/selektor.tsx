@@ -1,16 +1,47 @@
 
 
-import { View, Text, StyleSheet, Image, StatusBar, SafeAreaView, Platform, LayoutChangeEvent, Dimensions } from 'react-native'
-import { Link } from 'expo-router'
-import React, {useState} from 'react'
-import { FlatList, GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
+import { View, Text, StyleSheet, Image, StatusBar, SafeAreaView, Platform, Dimensions, Pressable, Linking } from 'react-native'
+import { useRouter } from 'expo-router'
+import React, {useState, useEffect} from 'react'
+import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
+
 
 
 
 const selektor = () => {
-  
-  const testCount = 100
+  /* everything below here are custom react-native props */
+
+  /*Needs to be capitalised because it is a custom react-native prop (not just for cleancode reasons, if it is uncapitalised it will throw an error)*/ 
+  const SelectorLineBreak = () =>{
+    return(
+      <View style={{ height: 3, backgroundColor: 'black', marginHorizontal: 5 }} />
+    )
+  }
+
+  type FlashButtonProps = {
+    title: string;
+    onPress?: () => void;
+  }
+  const SelectorButton = ({title, onPress }: FlashButtonProps) =>{
+    const defaultButtonBgColor = 'rgba(0,0,0,0.5)'
+    const [buttonBgColor, setButtonBgColor] = useState(defaultButtonBgColor);
+    return(
+      <Pressable style={[styles.button, {backgroundColor: buttonBgColor}]} onPressIn={() => setButtonBgColor('rgba(0,0,0,0.2)')} onPressOut={() => setButtonBgColor(defaultButtonBgColor)} onPress={onPress}>
+        <Text style={styles.buttonText}>{title}</Text>
+      </Pressable>
+    )
+  }
+
+  /* Everything below here is selector functionality (js) */
+  const router = useRouter()
+  const goToIndexScreen = () => {
+    router.push('/')
+  };
+
+
+  const testCount = 50
   const test = [];
+
   for (let i = 1; i <= testCount; i++) {
 
     test.push(
@@ -21,14 +52,14 @@ const selektor = () => {
         </View>
 
         <View style={styles.outputTextContainer}>
-          <Text style={styles.outputText} adjustsFontSizeToFit={true}>{i.toString()}</Text>
-          <Text style={styles.outputText} adjustsFontSizeToFit={true}>{"jørgen"}</Text>
+          <Text style={styles.outputText}>{i.toString()}</Text>
+          <Text style={styles.outputText}>{"jørgen"}</Text>
         </View>
       </View>
     )
   }
 
-  const inputCount = 101
+  const inputCount = 15
   const input = [];
   for (let i = 1; i <= inputCount; i++) {
     input.push(
@@ -38,8 +69,8 @@ const selektor = () => {
           </Image>
         </View>
         <View style={styles.inputTextContainer}>
-          <Text style={styles.inputText} adjustsFontSizeToFit={true}>{i.toString()}</Text>
-          <Text style={styles.inputText} adjustsFontSizeToFit={true}>stuen</Text>
+          <Text style={styles.inputText} >{i.toString()}</Text>
+          <Text style={styles.inputText} >stuen</Text>
         </View>
       </View>
     )
@@ -61,7 +92,7 @@ const selektor = () => {
             </ScrollView>
           </View>
           
-          <View style={{ height: 3, backgroundColor: 'black', marginHorizontal: 5 }} />
+          <SelectorLineBreak/>
 
           <View style={styles.inputContainer}>
             <ScrollView 
@@ -74,21 +105,19 @@ const selektor = () => {
             </ScrollView>
           </View>
 
-          <View style={{ height: 3, backgroundColor: 'black', marginHorizontal: 5 }} />
+          <SelectorLineBreak/>
           
           <View style={styles.buttonContainer}>
+    
 
-            <View style={styles.button}>
-              <Text style={styles.buttonText}>Exit</Text>
-            </View>
+            <SelectorButton title="Exit" onPress={goToIndexScreen}>
+            </SelectorButton>
 
-            <View style={styles.button}>
-              <Text style={styles.buttonText}>Clear All</Text>
-            </View>
+            <SelectorButton title="Clear All">
+            </SelectorButton>
 
-            <View style={styles.button}>
-              <Text style={styles.buttonText}>Listen</Text>
-            </View>
+            <SelectorButton title="Listen">
+            </SelectorButton>
 
           </View>
         </View>
@@ -100,6 +129,7 @@ const selektor = () => {
 export default selektor
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
 
 const styles = StyleSheet.create({
 
@@ -115,7 +145,6 @@ const styles = StyleSheet.create({
   scrollObjectContainer: {
     flexDirection: "column",
     justifyContent: 'space-evenly',
-    alignContent: "space-evenly",
     flexWrap: "wrap",
   },
 
@@ -168,12 +197,11 @@ const styles = StyleSheet.create({
   },
   outputInfoContainer:{
     maxWidth: screenWidth/2,
-    maxHeight: 160,
     minWidth: screenWidth/8,
     flexDirection: "column",
-    flexGrow: 1,
-    padding:5,
-    
+    padding: 5,
+    marginBottom: 5,
+    flexBasis: 160
   },
   outputTextContainer:{
     /*  'hsla(133, 70.60%, 50.60%, 0.5)' for activation*/
@@ -198,10 +226,10 @@ const styles = StyleSheet.create({
     resizeMode: "cover"
   },
   outputText:{
-    fontSize: 20,
+    fontWeight: "bold",
     color: "white",
-    flexShrink: 1,
-    textAlign: "center"
+    flexWrap: "wrap",
+    textAlign: "center",
   },
 
   buttonContainer: {
@@ -215,13 +243,12 @@ const styles = StyleSheet.create({
   button:{
     flex: 1,
     maxWidth: "25%",
-    height: "90%",
+    height: "100%",
     justifyContent: "center",
     alignItems: "center",
     borderColor: "black",
     borderWidth: 2,
     borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)'
   },
   buttonText:{
     color: "white",
