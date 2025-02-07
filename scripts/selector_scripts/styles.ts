@@ -1,22 +1,14 @@
 import {StyleSheet, StatusBar, Platform, Dimensions} from 'react-native'
+import * as misc from '../misc'
 
-
-/*get screen height and width*/
-const { width: screenWidth, height: screenHeight } = Dimensions.get('screen')
-/*get landscape height and width*/
-const landscapeWidth = Math.max(screenWidth, screenHeight);
-const landscapeHeight = Math.min(screenWidth, screenHeight);
 
 export const inputStyles = StyleSheet.create({
     container: {
         flex: 1,
     },
     infoContainer: {
-        /* we time the screen width with 0.2 to make sure inputinfocontainer fits at the minimum 20% of the screen*/
-        minWidth: landscapeWidth / 8,
-        /* here we write 50% to make the minimum height 50% of the parent object*/
         minHeight: 50,
-        maxWidth: landscapeWidth / 5,
+        maxWidth: misc.getLandscapeWidth() / 5,
         flexDirection: "row",
         flex: 1,
         padding:5,
@@ -42,12 +34,7 @@ export const inputStyles = StyleSheet.create({
         borderBottomWidth: 2,
         borderTopRightRadius: 10,
         borderBottomRightRadius: 10
-    },
-    text: {
-        color: "white",
-        flexShrink: 1,
-        textAlign: "center"
-    },
+    }
 })
 
 export const getInfoViewPressableStyle = (isOn: boolean) => ({
@@ -57,15 +44,14 @@ export const getInfoViewPressableStyle = (isOn: boolean) => ({
 export const outputStyles = StyleSheet.create({
     container:{
         flex: 5,
+        flexShrink:1,
     },
     infoContainer:{
-        maxWidth: landscapeWidth/3,
-        minWidth: landscapeWidth/8,
+        maxWidth: misc.getLandscapeWidth()/3,
         flexDirection: "column",
         padding: 5,
         marginBottom: 5,
-
-        flexBasis: 190
+        flexBasis: 180
     },
     textContainer:{
 
@@ -80,12 +66,6 @@ export const outputStyles = StyleSheet.create({
         height: "80%",
         borderColor: "black",
         borderWidth: 2,
-    },
-    text:{
-        fontWeight: "bold",
-        color: "white",
-        flexWrap: "wrap",
-        textAlign: "center",
     },
 })
 
@@ -111,7 +91,7 @@ export const generalStyles = StyleSheet.create({
         flexWrap: "wrap",
     },
     buttonContainer: {
-        flex: 0.40,
+        flex: 0.60,
         flexDirection: 'row',
         justifyContent: "space-evenly",
         alignItems: "center",
@@ -128,7 +108,31 @@ export const generalStyles = StyleSheet.create({
         borderWidth: 2,
         borderRadius: 10,
     },
-    buttonText:{
+    zoomBtn:{
+        flex:1,
+        maxWidth: "5%",
+        height: "100%",
+        justifyContent: "center",
+        alignItems: "center",
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)'
+    },
+    timecode:{
+        flex: 1,
+        maxWidth: "25%",
+        height: "100%",
+        justifyContent: "center",
+        alignItems: "center",
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+        backgroundColor: 'rgba(0, 0, 0, 0.25)'
+    },
+    text:{
+        fontWeight: "bold",
         color: "white",
-    }
+        textAlign: "center",
+    },
 })
