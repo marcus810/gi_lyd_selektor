@@ -54,7 +54,6 @@ export const outputStyles = StyleSheet.create({
         flexBasis: 180
     },
     textContainer:{
-
         borderColor: "black",
         borderLeftWidth: 2,
         borderRightWidth: 2,
@@ -95,7 +94,6 @@ export const generalStyles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: "space-evenly",
         alignItems: "center",
-        borderColor: "black",
         margin: 10
     },
     button:{
