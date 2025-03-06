@@ -2,7 +2,7 @@ import {StyleSheet, StatusBar, Platform, Dimensions} from 'react-native'
 import * as misc from '../misc'
 
 
-export const inputStyles = StyleSheet.create({
+export const outputStyles = StyleSheet.create({
     container: {
         flex: 1,
     },
@@ -13,27 +13,13 @@ export const inputStyles = StyleSheet.create({
         flex: 1,
         padding:5,
     },
-    imageContainer:{
-        justifyContent: "center",
-        flexGrow: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        borderColor: "black",
-        borderTopWidth: 2,
-        borderLeftWidth: 2,
-        borderBottomWidth: 2,
-        borderTopLeftRadius: 10,
-        borderBottomLeftRadius: 10
-    },
     textContainer:{
         justifyContent: "center",
         flexGrow: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
         borderColor: "black",
-        borderTopWidth: 2,
-        borderRightWidth: 2,
-        borderBottomWidth: 2,
-        borderTopRightRadius: 10,
-        borderBottomRightRadius: 10
+        borderWidth: 2,
+        borderRadius: 10,
     }
 })
 
@@ -41,7 +27,7 @@ export const getInfoViewPressableStyle = (isOn: boolean) => ({
     backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(0,0,0,0.5)'
   });
 
-export const outputStyles = StyleSheet.create({
+export const inputStyles = StyleSheet.create({
     container:{
         flex: 5,
         flexShrink:1,
