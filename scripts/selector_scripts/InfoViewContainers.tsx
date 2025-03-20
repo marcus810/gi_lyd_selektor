@@ -3,13 +3,25 @@ import InfoInputView from './InfoInputView'
 import InfoOutputView from './InfoOutputView'
 import React, { useRef } from 'react'
 import * as styles from './styles'
-import { IntercomInfo, InputInfo } from './types';
+import { IntercomInfo, InputInfo, TemplateInfo } from './types';
+import { template } from '@babel/core'
+import * as db from '../../scripts/database/database'
 
-export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[] ) => {
+export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo ) => {
 
-  const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>) => {
-    setToggle((prev) => !prev);
-  };
+
+
+
+  const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
+      setToggle((prev) => !prev);
+      if (toggle){
+        db.sendOutputOff(chosenTemplate, port)
+      }
+      else{
+        db.sendOutputOn(chosenTemplate, port)
+      }
+    };
+  
   return (
       intercomInfo.map((intercom, index) => (
         <InfoOutputView
@@ -20,6 +32,7 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[] ) => {
           textViewStyle={styles.outputStyles.textContainer}
           textStyle={styles.generalStyles.text}
           selectedStyle={styles.getInfoViewPressableStyle}
+          templateInfo={chosenTemplate}
           onToggle={handleToggle}
         />
       ))
@@ -27,12 +40,18 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[] ) => {
   );
 };
 
-export const InfoViewInputContainer = ( inputInfo: InputInfo[] ) => {
-
-
-  const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>) => {
+export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo ) => {
+  const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
     setToggle((prev) => !prev);
+    if (toggle){
+      db.sendInputOff(chosenTemplate, port)
+    }
+    else{
+      db.sendInputOn(chosenTemplate, port)
+    }
+
   };
+
   
   return (
       inputInfo.map((input, index) => (
@@ -47,6 +66,7 @@ export const InfoViewInputContainer = ( inputInfo: InputInfo[] ) => {
           imageStyle={styles.generalStyles.image}
           textStyle={styles.generalStyles.text}
           selectedStyle={styles.getInfoViewPressableStyle}
+          templateInfo={chosenTemplate}
           onToggle={handleToggle}
         />
       ))

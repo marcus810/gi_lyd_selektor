@@ -16,7 +16,9 @@ import * as misc from '../misc'
     textViewStyle,
     textStyle,
     selectedStyle,
-    onToggle}: types.InfoOutputViewProps) =>{
+    onToggle,
+    templateInfo
+  }: types.InfoOutputViewProps) =>{
 
       const [toggleState, setToggleState] = useState(false)
       const [minWidth, setMinWidth] = useState(8)
@@ -24,9 +26,10 @@ import * as misc from '../misc'
       const resolvedStyle = StyleSheet.flatten(outerViewStyle)
       const maxWidth = typeof resolvedStyle?.maxWidth === "number" ? resolvedStyle.maxWidth : 0;
 
+
           
       return(
-      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(setToggleState)}>
+      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(setToggleState, toggleState, templateInfo, port)}>
         <View style={[textViewStyle, selectedStyle(toggleState)]}>
           <Text style={textStyle}>{port.toString()}</Text>
           <Text style={textStyle}>{name}</Text>

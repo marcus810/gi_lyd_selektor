@@ -1,14 +1,65 @@
 import axios from "axios";
 import { TemplateInfo, InputInfo } from "../selector_scripts/types"; // Adjust the import path if necessary
 
-const API_URL = "http://192.168.0.13:8080";
+const API_URL = "http://192.168.0.10:8080";
+
+
 
 
 export const sendInputAndOutputInfo = async (templateInfoList: TemplateInfo[], inputInfoList: InputInfo[]) => {
-    sendTemplateInfo(templateInfoList)
+    sendTemplateInfoList(templateInfoList)
     sendInputInfo(inputInfoList)
 }
-const sendTemplateInfo = async (templateInfoList: TemplateInfo[]): Promise<void> => {
+
+export const sendInputOn = async (templateInfo: TemplateInfo, port: number): Promise<void> => {
+    try {
+        const response = await axios.post(`${API_URL}/post_input_on`, {
+            template: templateInfo,
+            port: port
+        });
+        console.log("Data successfully sent:", response.data);
+    } catch (error) {
+        console.error("Error sending data:", error);
+    }
+};
+
+export const sendInputOff = async (templateInfo: TemplateInfo, port: number): Promise<void> => {
+    try {
+        const response = await axios.post(`${API_URL}/post_input_off`, {
+            template: templateInfo,
+            port: port
+        });
+        console.log("Data successfully sent:", response.data);
+    } catch (error) {
+        console.error("Error sending data:", error);
+    }
+};
+
+export const sendOutputOn = async (templateInfo: TemplateInfo, port: number): Promise<void> => {
+    try {
+        const response = await axios.post(`${API_URL}/post_output_on`, {
+            template: templateInfo,
+            port: port
+        });
+        console.log("Data successfully sent:", response.data);
+    } catch (error) {
+        console.error("Error sending data:", error);
+    }
+};
+
+export const sendOutputOff = async (templateInfo: TemplateInfo, port: number): Promise<void> => {
+    try {
+        const response = await axios.post(`${API_URL}/post_output_off`, {
+            template: templateInfo,
+            port: port
+        });
+        console.log("Data successfully sent:", response.data);
+    } catch (error) {
+        console.error("Error sending data:", error);
+    }
+};
+
+const sendTemplateInfoList = async (templateInfoList: TemplateInfo[]): Promise<void> => {
     try {
         const response = await axios.post(`${API_URL}/post_templates`, {
             templates: templateInfoList
@@ -62,12 +113,11 @@ export const fetchTemplates = async (): Promise<TemplateInfo[]> => {
 
         // Transform the data into TemplateInfo format
         const templateInfoList: TemplateInfo[] = data.map((template: any) => {
-            
-
             return {
                 id: template.id,
                 noDelayPort: template.noDelayPort,
                 delayPort: template.delayPort,
+                micPort: template.micPort,
                 intercomInfo: template.intercomInfo || [],  // ensure intercomInfo is an empty array if not present
             };
         });

@@ -22,17 +22,20 @@ const selektor = () => {
   const [inputInfoList, setInputInfoList] = useState<types.InputInfo[]>([])
   const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([]);
   const [intercomInfoList, setIntercomInfoList] = useState<types.IntercomInfo[]>([]);
+  const [chosenTemplate, setChosenTemplate] = useState<types.TemplateInfo>();
 
 
   useEffect(() => {
+    console.log("selektor loaded")
     const fetchData = async () => {
         try {
             const templates = await db.fetchTemplates();  // Await the promise to get the actual data
             const inputs = await db.fetchInputs();  // Await the promise to get the actual data
-
             setTemplateInfoList(templates)  // Set the state with the resolved data
             setInputInfoList(inputs)
             setIntercomInfoList(templates[0].intercomInfo)
+            setChosenTemplate(templates[0])
+
         } catch (error) {
             console.error('Error fetching templates:', error);
             console.log('Full error details in fetchData:', JSON.stringify(error, null, 2));
@@ -57,9 +60,9 @@ const selektor = () => {
   //   onToggle: selektorHandler.handleInfoViewToggle
   //   })
 
-  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList)
+  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo)
 
-  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList)
+  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo)
 
   return (
     <GestureHandlerRootView>

@@ -19,7 +19,9 @@ import * as misc from '../misc'
     imageStyle,
     textStyle,
     selectedStyle,
-    onToggle}: types.InfoInputViewProps) =>{
+    templateInfo,
+    onToggle
+  }: types.InfoInputViewProps) =>{
 
       const [toggleState, setToggleState] = useState(false)
       const [minWidth, setMinWidth] = useState(8)
@@ -29,7 +31,7 @@ import * as misc from '../misc'
           
       const imageSource = { uri: imagePath}
       return(
-      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(setToggleState)}>
+      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(setToggleState, toggleState, templateInfo, port)}>
         <View style={[imageViewStyle, selectedStyle(toggleState)]}>
           <Image source={imageSource} style={imageStyle}>
           </Image>

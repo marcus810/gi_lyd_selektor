@@ -4,26 +4,32 @@
     "slug": "gi_lyd_selektor",
     "scheme": "gilydselektor",
     "version": "1.0.0",
-    "icon": "./assets/images/selfportrait.jpg",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "This app needs access to the local network to detect devices."
-      }
+        "NSBonjourServices": [
+          "_ssh._tcp",
+          "_http._tcp"
+        ],
+        "NSLocalNetworkUsageDescription": "This app needs access to the local network to detect devices.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor"
     },
     "android": {
-      "supportsTablet": true,
+      "permissions": [
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
-    },
-    "web": {
-      "bundler": "metro",
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      },
+      "package": "com.cringemaster4k.gi_lyd_selektor"
     },
     "plugins": [
       "expo-router",
@@ -39,6 +45,15 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "cb3643cd-8ada-416f-be58-664579850306"
+      }
+    },
+    "owner": "cringemaster4k"
   }
 }
