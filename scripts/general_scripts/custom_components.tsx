@@ -28,12 +28,17 @@ import * as types from './types'
       )
   }
   /* */
-  const LineBreak = () =>{
+  const LineBreak = () => {
     return(
       <View style={{ height: 3, backgroundColor: 'black', marginHorizontal: 5 }}/>
     )
   }
   
+  const VerticalLineBreak = () => {
+    return (
+      <View style={{ width: 3 , height: '100%', backgroundColor: 'black', marginHorizontal: 10 }} />
+    )
+  }
 
 
 // getters
@@ -62,5 +67,11 @@ import * as types from './types'
   export const getSelectorLineBreak = () => {
     return(
       <LineBreak></LineBreak>
+    )
+  }
+
+  export const getSelectorVerticalLineBreak = () => {
+    return(
+      <VerticalLineBreak></VerticalLineBreak>
     )
   }

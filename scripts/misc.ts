@@ -8,6 +8,15 @@ const getScreenDimensions = () => {
 
 }
 
+export const getLandscapeHeight = () => {
+
+    const [screenWidth, screenHeight] = getScreenDimensions()
+    const landscapeHeight = Math.min(screenWidth, screenHeight);
+
+    return landscapeHeight
+
+}
+
 export const getLandscapeWidth = () => {
 
     const [screenWidth, screenHeight] = getScreenDimensions()

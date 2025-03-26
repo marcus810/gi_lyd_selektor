@@ -1,6 +1,43 @@
 import {StyleSheet, StatusBar, Platform, Dimensions} from 'react-native'
-import * as misc from '../misc'
+import * as misc from './misc'
 
+export const templateSelectorStyles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: 'rgb(128,128,128)'
+    },
+    infoContainer: {
+        width: "100%",
+        height: misc.getLandscapeHeight()/4.7,
+        padding:5,
+    },
+    scrollObjectContainer: {
+        width: misc.getLandscapeWidth(),
+        flexDirection: "column",
+        justifyContent: 'space-evenly',
+        flexWrap: "wrap",
+    },
+    textContainer:{
+        justifyContent: "center",
+        flexGrow: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+    },
+    title: {
+        alignSelf: "center",
+        color: "white",
+        fontSize: 50,
+        fontWeight: "bold",
+        textAlign: "center",
+        paddingTop: 40
+      },
+    scrollview: {
+        justifyContent: "center"
+    }
+    
+})
 
 export const outputStyles = StyleSheet.create({
     container: {

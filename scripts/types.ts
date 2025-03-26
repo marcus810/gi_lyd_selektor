@@ -21,6 +21,14 @@ export type TemplateInfo = {
   intercomInfo: IntercomInfo[]
 }
 
+export type TemplateViewProps = {
+  name: string
+  outerViewStyle: StyleProp<ViewStyle>
+  textViewStyle: StyleProp<ViewStyle>
+  textStyle: StyleProp<TextStyle>
+  templateInfo: TemplateInfo
+  onPress: (template: TemplateInfo) => void
+}
 
 
 type BaseInfoViewProps = {

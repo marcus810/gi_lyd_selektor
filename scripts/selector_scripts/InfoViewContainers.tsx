@@ -2,15 +2,15 @@ import { View } from 'react-native'
 import InfoInputView from './InfoInputView'
 import InfoOutputView from './InfoOutputView'
 import React, { useRef } from 'react'
-import * as styles from './styles'
-import { IntercomInfo, InputInfo, TemplateInfo } from './types';
+import * as styles from '../styles'
+import { IntercomInfo, InputInfo, TemplateInfo } from '../types';
 import { template } from '@babel/core'
-import * as db from '../../scripts/database/database'
+import { DatabaseHandler } from '@/scripts/database/database'
 
 export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo ) => {
 
 
-
+  const db = DatabaseHandler.getInstance()
 
   const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
       setToggle((prev) => !prev);
@@ -41,6 +41,7 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
 };
 
 export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo ) => {
+  const db = DatabaseHandler.getInstance()
   const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
     setToggle((prev) => !prev);
     if (toggle){

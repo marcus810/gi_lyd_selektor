@@ -1,56 +1,76 @@
 
-import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform, NativeModules} from 'react-native'
+import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform} from 'react-native'
 import React, { useState, useEffect } from 'react'
-import { Link } from 'expo-router'
+import { Link, router } from 'expo-router'
 import Zeroconf from 'react-native-zeroconf';
-import * as db from '../scripts/database/database'
+import { DatabaseHandler } from '@/scripts/database/database'
+
 const index = () => {
+  const [isButtonDisabled, setIsButtonDisabled] = useState(false);
+  const db = DatabaseHandler.getInstance()
 
-//   const test = (() => {
-//     console.log("Initializing Zeroconf...");
+  const searchForService = (() => {
+    
+    console.log("Initializing Zeroconf...");
 
-//     const zeroconf = new Zeroconf();
+    setIsButtonDisabled(true);
 
-//     // Start scanning for the specific service (e.g., '_http._tcp' for HTTP services)
-//     zeroconf.on('start', () => {
-//         console.log('Scan started...');
-//     });
+    const zeroconf = new Zeroconf();
+    // Start scanning for the specific service (e.g., '_http._tcp' for HTTP services)
+    zeroconf.on('start', () => {
+      
+        console.log('Scan started...');
+        setTimeout(() => {
+          console.log('Stopping Zeroconf scan after 6 seconds...');
+          zeroconf.stop();  // Stop scanning
+          zeroconf.removeDeviceListeners();  // Remove device listeners
+          zeroconf.removeAllListeners();  // Remove all event listeners
+          setIsButtonDisabled(false);
+      }, 6000);  // 6000 milliseconds = 6 seconds
+    });
 
-//     // Event triggered when a service is found (but not fully resolved)
-//     zeroconf.on('found', (service) => {
-//         if (service === 'gi_lyd_selector') {
-//             console.log('Service found:', service);
-//             console.log('Service is found but not fully resolved yet.');
-//         }
-//     });
+    // Event triggered when a service is found (but not fully resolved)
+    zeroconf.on('found', (service) => {
+        if (service === 'gi_lyd_selector') {
+            console.log('Service found:', service);
+            console.log('Service is found but not fully resolved yet.');
+        }
+    });
 
-//     // Event triggered when a service is resolved (fully discovered)
-//     zeroconf.on('resolved', (service) => {
-//         if (service.name === 'gi_lyd_selector') {
-//             console.log('Resolved service:', service);
-//             console.log('IP Address:', service.host);  // The IP address of the resolved service
-//             console.log('Port:', service.port);       // The port of the resolved service
-//             zeroconf.stop();  // Stop scanning once the service is resolved
-//         }
-//     });
+    // Event triggered when a service is resolved (fully discovered)
+    zeroconf.on('resolved', (service) => {
+        if (service.name === 'gi_lyd_selector') {
+            console.log('Resolved service:', service);
+            console.log('IP Address:', service.host);  // The IP address of the resolved service
+            console.log('Port:', service.port);       // The port of the resolved service
+        }
+        // Stop any previous scans to ensure a clean start
+        zeroconf.stop();  // Stop scanning
+        zeroconf.removeDeviceListeners();  // Remove device listeners
+        zeroconf.removeAllListeners();  // Remove all event listeners
+        const api_url = `http://${service.txt.local_ip}:${service.txt.port}`
+        console.log(api_url)
+        db.setApiUrl(api_url)
+        router.push("/template_selector")
+    });
 
-//     // Event triggered when a service is removed
-//     zeroconf.on('remove', (name) => {
-//         console.log('Service removed:', name);
-//     });
+    // Event triggered when a service is removed
+    zeroconf.on('remove', (name) => {
+        console.log('Service removed:', name);
+    });
 
-//     // Event triggered when an error occurs
-//     zeroconf.on('error', (err) => {
-//         console.error('Zeroconf error:', err);
-//     });
+    // Event triggered when an error occurs
+    zeroconf.on('error', (err) => {
+      zeroconf.stop();  // Stop scanning
+      zeroconf.removeDeviceListeners();  // Remove device listeners
+      zeroconf.removeAllListeners();  // Remove all event listeners
+        console.error('Zeroconf error:', err);
+    });
 
-//     // Stop any previous scans to ensure a clean start
-//     zeroconf.stop();
+    // Start scanning for the service (adjust the service type accordingly)
+    zeroconf.scan('http', 'tcp', 'local.');
 
-//     // Start scanning for the service (adjust the service type accordingly)
-//     zeroconf.scan('http', 'tcp', 'local.');
-
-// });
+});
   
 
    
@@ -61,11 +81,11 @@ const index = () => {
         <Text style={styles.title}>Gi Lyd Selektor</Text>
       </View>
       <View style={styles.linkContainer}>
-        <Link href="/selektor" style={{ marginHorizontal: "auto" }} asChild>
-          <Pressable style={styles.button}>
+        {/* <Link href="/selektor" style={{ marginHorizontal: "auto" }} asChild> */}
+          <Pressable style={styles.button} onPress={searchForService} disabled={isButtonDisabled}>
             <Text style={styles.buttonText}>Connect</Text>
           </Pressable>
-        </Link>
+        {/* </Link> */}
       </View>
     </View>
     </SafeAreaView>

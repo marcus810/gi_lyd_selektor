@@ -1,7 +1,7 @@
 import { View, Text, Image, Pressable } from 'react-native'
 import { StyleSheet } from "react-native";
 import React, { forwardRef, useRef, useState, useImperativeHandle, } from 'react'
-import * as types from './types'
+import * as types from '../types'
 import * as misc from '../misc'
 
 
