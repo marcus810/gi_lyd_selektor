@@ -108,7 +108,7 @@ const selektor = () => {
 
         <View style={styles.generalStyles.container}>
         
-          <View style={styles.outputStyles.container}>
+          <View style={styles.inputStyles.container}>
             <ScrollView 
               horizontal={true}
               bounces={false}
