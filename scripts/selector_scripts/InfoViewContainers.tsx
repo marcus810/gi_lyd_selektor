@@ -12,7 +12,7 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
 
   const db = DatabaseHandler.getInstance()
 
-  const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
+  const handleToggleLatch = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
       setToggle((prev) => !prev);
       if (toggle){
         db.sendOutputOff(chosenTemplate, port)
@@ -22,18 +22,33 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
       }
     };
   
+  const handleToggleUnlatchPress = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => {
+    setToggle((prev) => !prev);
+    db.sendOutputOn(chosenTemplate, port)   
+  };
+  
+  const handleToggleUnlatchRelease = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => {
+    setToggle((prev) => !prev);
+    db.sendOutputOff(chosenTemplate, port)   
+  };
+  
+  
   return (
       intercomInfo.map((intercom, index) => (
+
         <InfoOutputView
           key={index}
           port={intercom.port}
           name={intercom.name}
+          intercomInfo={intercom}
           outerViewStyle={styles.outputStyles.infoContainer}
           textViewStyle={styles.outputStyles.textContainer}
           textStyle={styles.generalStyles.text}
-          selectedStyle={styles.getInfoViewPressableStyle}
+          selectedStyle={styles.getInfoViewPressableStyleOutput}
           templateInfo={chosenTemplate}
-          onToggle={handleToggle}
+          onToggleLatch={handleToggleLatch}
+          onToggleUnlatchPress={handleToggleUnlatchPress}
+          onToggleUnlatchRelease={handleToggleUnlatchRelease}
         />
       ))
 
@@ -66,7 +81,7 @@ export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: 
           textViewStyle={styles.inputStyles.textContainer}
           imageStyle={styles.generalStyles.image}
           textStyle={styles.generalStyles.text}
-          selectedStyle={styles.getInfoViewPressableStyle}
+          selectedStyle={styles.getInfoViewPressableStyleInput}
           templateInfo={chosenTemplate}
           onToggle={handleToggle}
         />

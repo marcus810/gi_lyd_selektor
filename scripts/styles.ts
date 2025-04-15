@@ -35,16 +35,24 @@ export const templateSelectorStyles = StyleSheet.create({
       },
     scrollview: {
         justifyContent: "center"
-    }
+    },
+    text:{
+      
+        color: "white",
+        textAlign: "center",
+        fontSize: 75
+    },
     
 })
 
 export const outputStyles = StyleSheet.create({
     container: {
         flex: 1,
+        
     },
     infoContainer: {
         minHeight: 50,
+        maxHeight: "50%",
         maxWidth: misc.getLandscapeWidth() / 5,
         flexDirection: "row",
         flex: 1,
@@ -60,8 +68,20 @@ export const outputStyles = StyleSheet.create({
     }
 })
 
-export const getInfoViewPressableStyle = (isOn: boolean) => ({
+export const getInfoViewPressableStyleInput = (isOn: boolean) => ({
     backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(0,0,0,0.5)'
+  });
+
+export const getInfoViewPressableStyleOutput = (isOn: boolean, omniState: boolean) => ({
+    backgroundColor: omniState
+        ? 'rgba(9, 9, 99, 0.5)'
+        : isOn
+        ? 'hsla(133, 70.60%, 50.60%, 0.5)'
+        : 'rgba(0,0,0,0.5)',
+});
+
+export const getInfoViewPressableStyleOmni = (isOn: boolean) => ({
+    backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(9, 9, 99, 0.5)'
   });
 
 export const inputStyles = StyleSheet.create({
@@ -109,7 +129,7 @@ export const generalStyles = StyleSheet.create({
     },
     scrollObjectContainer: {
         flexDirection: "column",
-        justifyContent: 'space-evenly',
+        justifyContent: 'flex-start',
         flexWrap: "wrap",
     },
     buttonContainer: {

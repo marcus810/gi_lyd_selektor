@@ -1,7 +1,7 @@
 
 
 /* libraries */
-import { View, Text, SafeAreaView, AppState, AppStateStatus } from 'react-native'
+import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable} from 'react-native'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 /* our files */
 import * as styles from '../scripts/styles'
@@ -25,6 +25,9 @@ const selektor = () => {
   const [intercomInfoList, setIntercomInfoList] = useState<types.IntercomInfo[]>([]);
   const [chosenTemplate, setChosenTemplate] = useState<types.TemplateInfo>();
 
+  const [intercomOmniListPorts, setIntercomOmniListPorts] = useState<number[]>()
+  const [omniIsOn, setOmniIsOn] = useState(false)
+
 
 
   const goToIndexScreen = (chosenTemplate: types.TemplateInfo) => {
@@ -32,6 +35,21 @@ const selektor = () => {
     db.playerExit(chosenTemplate)
     router.push('/')
   };
+
+  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo)
+
+  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo)
+
+  const addOmniToList = (intercomList: types.IntercomInfo[]) => {
+    const intercomOmnis: number[] = []
+    intercomList.forEach(intercom => {
+      if (intercom.omniState){
+        intercomOmnis.push(intercom.port)
+      }
+    });
+    return intercomOmnis
+  }
+
 
   useEffect(() => {
 
@@ -69,7 +87,8 @@ const selektor = () => {
             db.playerJoin(parsedTemplate)
             setInputInfoList(inputs)
             setIntercomInfoList(parsedTemplate.intercomInfo)
-            
+            setIntercomOmniListPorts(addOmniToList(parsedTemplate.intercomInfo))
+
             
 
         } catch (error) {
@@ -83,7 +102,24 @@ const selektor = () => {
     
   }, []);  // Empty dependency array to run only once when the component mounts
 
-
+  const handleToggleLatch = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo, ports: number[] | undefined) => {
+    setToggle((prev) => !prev);
+        if (toggle){
+          db.sendOutputOffOmni(chosenTemplate, ports)
+        }
+        else{
+          db.sendOutputOnOmni(chosenTemplate, ports)
+        }
+    };
+  const handleToggleUnlatchPress = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: types.TemplateInfo | undefined, ports: number[] | undefined) => {
+    setToggle((prev) => !prev);
+    db.sendOutputOnOmni(chosenTemplate, ports)   
+  };
+  
+  const handleToggleUnlatchRelease = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: types.TemplateInfo | undefined, ports: number[] | undefined) => {
+    setToggle((prev) => !prev);
+    db.sendOutputOffOmni(chosenTemplate, ports)   
+  };
 
   /* userefs */
 
@@ -97,10 +133,6 @@ const selektor = () => {
   //   dataType: "input",
   //   onToggle: selektorHandler.handleInfoViewToggle
   //   })
-
-  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo)
-
-  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo)
 
   return (
     <GestureHandlerRootView>
@@ -157,6 +189,26 @@ const selektor = () => {
             <View style={styles.generalStyles.timecode}>
               <Text style={styles.generalStyles.text}>11:24:05:23</Text>
             </View>
+
+            <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleOmni(omniIsOn)]} 
+                  onPress={() => {
+                    if (chosenTemplate?.omniState) {
+                      handleToggleLatch(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniListPorts);
+                    } 
+                  }}
+                  onPressIn={() => {
+                    if(!chosenTemplate?.omniState){
+                      handleToggleUnlatchPress(setOmniIsOn, chosenTemplate, intercomOmniListPorts);
+                    }
+                  }}
+                  onPressOut={() => {
+                    if(!chosenTemplate?.omniState){
+                      handleToggleUnlatchRelease(setOmniIsOn, chosenTemplate, intercomOmniListPorts);
+                    }
+                  }}>
+              <Text style={styles.generalStyles.text}>Omni</Text>
+            </Pressable>
+                  
 {/* 
             {generalComponent.getButton({
               title: "-",

@@ -18,10 +18,10 @@ export const TemplateContainer = ( templateInfo: TemplateInfo[] ) => {
         templateInfo.map((template, index) => (
           <TemplateView
             key={index}
-            name={template.id.toString()}
+            name={template.name.toString()}
             outerViewStyle={styles.templateSelectorStyles.infoContainer}
             textViewStyle={styles.templateSelectorStyles.textContainer}
-            textStyle={styles.generalStyles.text}
+            textStyle={styles.templateSelectorStyles.text}
             templateInfo={template}
             onPress={onPress}
           />

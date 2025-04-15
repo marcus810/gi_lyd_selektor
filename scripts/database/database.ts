@@ -60,6 +60,30 @@ export class DatabaseHandler {
             console.error("Error sending data:", error);
         }
     };
+
+    public async sendOutputOnOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+        try {
+            const response = await axios.post(`${this.api_url}/post_output_on_omni`, {
+                template: templateInfo,
+                ports: ports
+            });
+            console.log("Data successfully sent:", response.data);
+        } catch (error) {
+            console.error("Error sending data:", error);
+        }
+    };
+
+    public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+        try {
+            const response = await axios.post(`${this.api_url}/post_output_off_omni`, {
+                template: templateInfo,
+                ports: ports
+            });
+            console.log("Data successfully sent:", response.data);
+        } catch (error) {
+            console.error("Error sending data:", error);
+        }
+    };
     
     public async sendOutputOff(templateInfo: TemplateInfo, port: number): Promise<void>{
         try {
@@ -151,10 +175,12 @@ export class DatabaseHandler {
             const templateInfoList: TemplateInfo[] = data.map((template: any) => {
                 return {
                     id: template.id,
+                    name: template.name,
                     noDelayPort: template.noDelayPort,
                     delayPort: template.delayPort,
                     micPort: template.micPort,
                     intercomInfo: template.intercomInfo || [],  // ensure intercomInfo is an empty array if not present
+                    omniState: template.omniState
                 };
             });
     

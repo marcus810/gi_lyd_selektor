@@ -5,6 +5,8 @@ import { ImageSourcePropType, ViewStyle, TextStyle, ImageStyle, StyleProp} from 
 export type IntercomInfo = {
   port: number
   name: string
+  omniState: boolean
+  latchState: boolean
 }
 
 export type InputInfo = {
@@ -15,10 +17,12 @@ export type InputInfo = {
 
 export type TemplateInfo = {
   id: number
+  name: string
   noDelayPort: number
   delayPort: number
   micPort: number
   intercomInfo: IntercomInfo[]
+  omniState: boolean
 }
 
 export type TemplateViewProps = {
@@ -37,12 +41,15 @@ type BaseInfoViewProps = {
   textStyle: StyleProp<TextStyle>
   selectedStyle: Function
   templateInfo: TemplateInfo
-  onToggle: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => void
 }
 
 export type InfoOutputViewProps = BaseInfoViewProps & {
   port: number
   name: string
+  intercomInfo: IntercomInfo
+  onToggleLatch: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => void
+  onToggleUnlatchPress: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => void
+  onToggleUnlatchRelease: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => void
 }
 
 export type InfoInputViewProps = BaseInfoViewProps & {
@@ -51,6 +58,7 @@ export type InfoInputViewProps = BaseInfoViewProps & {
     name: string
     imageStyle: StyleProp<ImageStyle>
     imageViewStyle: StyleProp<ViewStyle>
+    onToggle: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => void
   }
 
 export type InfoViewRef = {
