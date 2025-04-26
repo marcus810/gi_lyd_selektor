@@ -180,6 +180,7 @@ export class DatabaseHandler {
                     delayPort: template.delayPort,
                     micPort: template.micPort,
                     intercomInfo: template.intercomInfo || [],  // ensure intercomInfo is an empty array if not present
+                    delay: template.delay,
                     omniState: template.omniState
                 };
             });

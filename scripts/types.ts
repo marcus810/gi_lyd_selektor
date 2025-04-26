@@ -22,6 +22,7 @@ export type TemplateInfo = {
   delayPort: number
   micPort: number
   intercomInfo: IntercomInfo[]
+  delay: number
   omniState: boolean
 }
 
