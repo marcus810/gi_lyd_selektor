@@ -3,6 +3,7 @@
 /* libraries */
 import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable} from 'react-native'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
+import { Alert } from 'react-native';  // To show alerts
 /* our files */
 import * as styles from '../scripts/styles'
 import * as containers from '../scripts/selector_scripts/InfoViewContainers'
@@ -36,6 +37,25 @@ const selektor = () => {
     router.push('/')
   };
 
+  const handleSocketDisconnect = () => {
+      console.log('Socket disconnected. Attempting to reconnect...');
+      
+      Alert.alert(
+          "Connection Lost",
+          "We lost connection to the server. Retrying...",
+          [{ text: "OK" }]
+      );
+
+      // Handle the case where the socket fails to reconnect after 3 attempts
+      setTimeout(() => {
+          Alert.alert(
+              "Failed to Reconnect",
+              "The connection could not be restored. You will be redirected to the main screen.",
+              [{ text: "OK", onPress: () => goToIndexScreen(chosenTemplate as types.TemplateInfo) }]
+          );
+      }, 7000);  // Show after waiting for a while to give reconnection a chance
+  };
+
   const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo)
 
   const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo)
@@ -50,6 +70,8 @@ const selektor = () => {
     return intercomOmnis
   }
 
+  
+
 
   useEffect(() => {
 
@@ -62,6 +84,8 @@ const selektor = () => {
         appStateListener.remove()
       }
     };
+    // Register the disconnection handler
+    db.onSocketDisconnect(handleSocketDisconnect);
 
     // Add event listener to listen for changes in app state
     const appStateListener = AppState.addEventListener('change', handleAppStateChange);

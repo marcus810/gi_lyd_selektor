@@ -5,6 +5,10 @@ import { TemplateInfo, InputInfo } from "../types"; // Adjust the import path if
 
 export class DatabaseHandler {
     private static instance: DatabaseHandler;
+    private socket: WebSocket | null = null;
+    private onDisconnect: (() => void) | null = null;
+    private reconnectAttempts = 0;  // To track the number of reconnection attempts
+    private maxReconnectAttempts = 3;  // Maximum number of attempts to reconnect
     public api_url: string;
   
     // Private constructor to prevent direct instantiation
@@ -19,179 +23,324 @@ export class DatabaseHandler {
       }
       return DatabaseHandler.instance;
     }
-
-    public async sendInputAndOutputInfo(templateInfoList: TemplateInfo[], inputInfoList: InputInfo[]){
-        this.sendTemplateInfoList(templateInfoList)
-        this.sendInputInfo(inputInfoList)
+    // Register the disconnection handler
+    public onSocketDisconnect(callback: () => void) {
+        this.onDisconnect = callback;
     }
     
-    public async sendInputOn(templateInfo: TemplateInfo, port: number): Promise<void>{
-        try {
-            const response = await axios.post(`${this.api_url}/post_input_on`, {
-                template: templateInfo,
-                port: port
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
-    
-    public async sendInputOff(templateInfo: TemplateInfo, port: number): Promise<void>{
-        try {
-            const response = await axios.post(`${this.api_url}/post_input_off`, {
-                template: templateInfo,
-                port: port
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
-    
-    public async sendOutputOn(templateInfo: TemplateInfo, port: number): Promise<void> {
-        try {
-            const response = await axios.post(`${this.api_url}/post_output_on`, {
-                template: templateInfo,
-                port: port
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
 
-    public async sendOutputOnOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
-        try {
-            const response = await axios.post(`${this.api_url}/post_output_on_omni`, {
-                template: templateInfo,
-                ports: ports
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
+public async connectSocket(): Promise<void> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        this.socket = new WebSocket(`ws://${this.api_url}/ws/player`); // adjust!
 
-    public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
-        try {
-            const response = await axios.post(`${this.api_url}/post_output_off_omni`, {
-                template: templateInfo,
-                ports: ports
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
-    
-    public async sendOutputOff(templateInfo: TemplateInfo, port: number): Promise<void>{
-        try {
-            const response = await axios.post(`${this.api_url}/post_output_off`, {
-                template: templateInfo,
-                port: port
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
+        this.socket.onopen = () => {
+            console.log("WebSocket connection established");
+            this.reconnectAttempts = 0; // Reset the reconnect attempts on successful connection
+        };
 
-    public async playerJoin(templateInfo: TemplateInfo): Promise<void>{
-        try {
-            const response = await axios.post(`${this.api_url}/player_join`, {
-                template: templateInfo,
-            })
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.log("Error sending data:", error);
-        }
+        this.socket.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            console.log("Received message from server:", message);
+        };
+
+        this.socket.onclose = () => {
+            console.log('WebSocket disconnected');
+            if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                this.reconnectAttempts++;
+                console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+                setTimeout(() => this.connectSocket(), 2000);  // Retry after 2 seconds
+            } else {
+                console.log('Max reconnection attempts reached. Could not reconnect.');
+                if (this.onDisconnect) {
+                    this.onDisconnect();  // Notify when all attempts fail
+                }
+            }
+        };
+
+        this.socket.onerror = (error) => {
+            console.error("WebSocket error:", error);
+        };
     }
+}
 
-    public async playerExit(templateInfo: TemplateInfo): Promise<void>{
-        try {
-            const response = await axios.post(`${this.api_url}/player_exit`, {
-                template: templateInfo,
-            })
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.log("Error sending data:", error);
-        }
+// Send generic message through WS
+private sendMessage(msg: any): void {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        this.socket.send(JSON.stringify(msg));
+    } else {
+        console.error("WebSocket is not open.");
+    }
+}
+
+// Player Join
+public async playerJoin(templateInfo: TemplateInfo): Promise<void> {
+    await this.connectSocket();
+    const joinMessage = {
+        action: "player_join",
+        template: templateInfo,
+    };
+    this.sendMessage(joinMessage);
+}
+
+// Send Input On
+public async sendInputOn(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "input_on",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
+// Send Input Off
+public async sendInputOff(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "input_off",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
+// Send Output On
+public async sendOutputOn(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "output_on",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
+// Send Output Off
+public async sendOutputOff(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "output_off",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
+// Send Output On Omni
+public async sendOutputOnOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+    const msg = {
+        action: "output_on_omni",
+        template: templateInfo,
+        ports: ports,
+    };
+    this.sendMessage(msg);
+}
+
+// Send Output Off Omni
+public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+    const msg = {
+        action: "output_off_omni",
+        template: templateInfo,
+        ports: ports,
+    };
+    this.sendMessage(msg);
+}
+
+
+    // public async sendInputAndOutputInfo(templateInfoList: TemplateInfo[], inputInfoList: InputInfo[]){
+    //     this.sendTemplateInfoList(templateInfoList)
+    //     this.sendInputInfo(inputInfoList)
+    // }
+    
+    // public async sendInputOn(templateInfo: TemplateInfo, port: number): Promise<void>{
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_input_on`, {
+    //             template: templateInfo,
+    //             port: port
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+    
+    // public async sendInputOff(templateInfo: TemplateInfo, port: number): Promise<void>{
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_input_off`, {
+    //             template: templateInfo,
+    //             port: port
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+    
+    // public async sendOutputOn(templateInfo: TemplateInfo, port: number): Promise<void> {
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_output_on`, {
+    //             template: templateInfo,
+    //             port: port
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+
+    // public async sendOutputOnOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_output_on_omni`, {
+    //             template: templateInfo,
+    //             ports: ports
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+
+    // public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_output_off_omni`, {
+    //             template: templateInfo,
+    //             ports: ports
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+    
+    // public async sendOutputOff(templateInfo: TemplateInfo, port: number): Promise<void>{
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_output_off`, {
+    //             template: templateInfo,
+    //             port: port
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+
+    // public async playerJoin(templateInfo: TemplateInfo): Promise<void>{
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/player_join`, {
+    //             template: templateInfo,
+    //         })
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.log("Error sending data:", error);
+    //     }
+    // }
+
+    public async playerExit(templateInfo: TemplateInfo | undefined): Promise<void> {
+        const msg = {
+            action: "player_exit",
+            template: templateInfo,
+            
+        };
+        this.sendMessage(msg);
     }
     
-    public async sendTemplateInfoList(templateInfoList: TemplateInfo[]): Promise<void> {
-        try {
-            const response = await axios.post(`${this.api_url}/post_templates`, {
-                templates: templateInfoList
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
+    // public async sendTemplateInfoList(templateInfoList: TemplateInfo[]): Promise<void> {
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_templates`, {
+    //             templates: templateInfoList
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
     
-    public async sendInputInfo(inputInfoList: InputInfo[]): Promise<void> {
-        try {
-            const response = await axios.post(`${this.api_url}/post_inputs`, {
-                inputs: inputInfoList
-            });
-            console.log("Data successfully sent:", response.data);
-        } catch (error) {
-            console.error("Error sending data:", error);
-        }
-    };
-    
+    // public async sendInputInfo(inputInfoList: InputInfo[]): Promise<void> {
+    //     try {
+    //         const response = await axios.post(`${this.api_url}/post_inputs`, {
+    //             inputs: inputInfoList
+    //         });
+    //         console.log("Data successfully sent:", response.data);
+    //     } catch (error) {
+    //         console.error("Error sending data:", error);
+    //     }
+    // };
+
     public async fetchInputs(): Promise<InputInfo[]> {
-        try {
+        return new Promise<InputInfo[]>((resolve, reject) => {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+                reject(new Error('WebSocket is not connected'));
+                return;
+            }
     
-            // Fetch inputs from the backend
-            const response = await axios.post(`${this.api_url}/get_inputs`);
-            const data = response.data;  // assuming the API returns the list of inputs
+            const fetchInputsRequest = {
+                action: "get_inputs",
+                template: {} // no template needed for fetching inputs
+            };
     
-            // Transform the data into InputInfo format
-            const inputInfoList: InputInfo[] = data.map((input: any) => {
-                return {
-                    port: input.port,
-                    name: input.name,
-                    picturePath: input.picturePath,
-                };
-            });
+            // Listen for a one-time response
+            const handleMessage = (event: MessageEvent) => {
+                const message = JSON.parse(event.data);
     
-            return inputInfoList;
-        } catch (error) {
-            console.error('Error fetching inputs:', error);
-            console.log('Full error details:', JSON.stringify(error, null, 2)); // Logs full error object in readable format
-            throw new Error('Failed to fetch inputs');
-        }
-    };
+                if (message.action === "get_inputs") {
+                    this.socket?.removeEventListener('message', handleMessage);
+    
+                    if (message.error) {
+                        reject(new Error(message.error));
+                    } else {
+                        const inputInfoList: InputInfo[] = message.inputs.map((input: any) => ({
+                            port: input.port,
+                            name: input.name,
+                            picturePath: input.picturePath
+                        }));
+                        resolve(inputInfoList);
+                    }
+                }
+            };
+    
+            this.socket.addEventListener('message', handleMessage);
+    
+            this.socket.send(JSON.stringify(fetchInputsRequest));
+        });
+    }
 
     public async fetchTemplates(): Promise<TemplateInfo[]> {
-        try {
-            // Fetch templates from the backend
-            const response = await axios.post(`${this.api_url}/get_templates`);
-            const data = response.data;  // assuming the API returns the list of templates
+        return new Promise<TemplateInfo[]>((resolve, reject) => {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+                reject(new Error('WebSocket is not connected'));
+                return;
+            }
     
-            // Transform the data into TemplateInfo format
-            const templateInfoList: TemplateInfo[] = data.map((template: any) => {
-                return {
-                    id: template.id,
-                    name: template.name,
-                    noDelayPort: template.noDelayPort,
-                    delayPort: template.delayPort,
-                    micPort: template.micPort,
-                    intercomInfo: template.intercomInfo || [],  // ensure intercomInfo is an empty array if not present
-                    delay: template.delay,
-                    omniState: template.omniState
-                };
-            });
+            const fetchTemplatesRequest = {
+                action: "get_templates",
+                template: {} // optional, no data needed
+            };
     
-            return templateInfoList;
-        } catch (error) {
-            console.error('Error fetching templates:', error);
-            console.log('Full error details:', JSON.stringify(error, null, 2)); // Logs full error object in readable format
-            throw new Error('Failed to fetch templates');
-        }
-    };
+            const handleMessage = (event: MessageEvent) => {
+                const message = JSON.parse(event.data);
+    
+                if (message.action === "get_templates") {
+                    this.socket?.removeEventListener('message', handleMessage);
+    
+                    if (message.error) {
+                        reject(new Error(message.error));
+                    } else {
+                        const templateInfoList: TemplateInfo[] = message.templates.map((template: any) => ({
+                            id: template.id,
+                            name: template.name,
+                            noDelayPort: template.noDelayPort,
+                            delayPort: template.delayPort,
+                            micPort: template.micPort,
+                            intercomInfo: template.intercomInfo || [],
+                            delay: template.delay,
+                            omniState: template.omniState
+                        }));
+                        resolve(templateInfoList);
+                    }
+                }
+            };
+    
+            this.socket.addEventListener('message', handleMessage);
+    
+            this.socket.send(JSON.stringify(fetchTemplatesRequest));
+        });
+    }
   
     // Optional: Method to update the API URL
     public setApiUrl(url: string): void {
