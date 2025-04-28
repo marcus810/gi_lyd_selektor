@@ -1,13 +1,34 @@
 
 import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform} from 'react-native'
 import React, { useState, useEffect } from 'react'
-import { Link, router } from 'expo-router'
+import { Alert } from 'react-native';  // To show alerts
 import Zeroconf from 'react-native-zeroconf';
 import { DatabaseHandler } from '@/scripts/database/database'
+import { TemplateInfo, InputInfo } from "../scripts/types"; // Adjust the import path if necessary
+import { Link, router } from 'expo-router'
 
 const index = () => {
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
   const db = DatabaseHandler.getInstance()
+
+
+
+    const goToIndexScreen = () => {
+      router.push('/')
+    };
+  
+    const handleSocketDisconnect = () => {
+        console.log('Socket disconnected. Attempting to reconnect...');
+  
+        // Handle the case where the socket fails to reconnect after 3 attempts
+        setTimeout(() => {
+            Alert.alert(
+                "Failed to Reconnect",
+                "The connection could not be restored. You will be redirected to the main screen.",
+                [{ text: "OK", onPress: () => goToIndexScreen() }]
+            );
+        }, 7000);  // Show after waiting for a while to give reconnection a chance
+    };
 
   const searchForService = (() => {
     
@@ -51,7 +72,8 @@ const index = () => {
         const api_url = `http://${service.txt.local_ip}:${service.txt.port}`
         console.log(api_url)
         db.setApiUrl(api_url)
-        router.push("/template_selector")
+        db.onSocketDisconnect(handleSocketDisconnect);
+        db.connectSocket()
     });
 
     // Event triggered when a service is removed

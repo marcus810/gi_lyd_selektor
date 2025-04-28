@@ -1,6 +1,6 @@
 import axios from "axios";
 import { TemplateInfo, InputInfo } from "../types"; // Adjust the import path if necessary
-
+import { Link, router } from 'expo-router'
 
 
 export class DatabaseHandler {
@@ -31,11 +31,12 @@ export class DatabaseHandler {
 
 public async connectSocket(): Promise<void> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-        this.socket = new WebSocket(`ws://${this.api_url}/ws/player`); // adjust!
+        this.socket = new WebSocket(`${this.api_url}/ws/player`); // adjust!
 
         this.socket.onopen = () => {
             console.log("WebSocket connection established");
             this.reconnectAttempts = 0; // Reset the reconnect attempts on successful connection
+            router.push("/template_selector")
         };
 
         this.socket.onmessage = (event) => {
@@ -74,7 +75,7 @@ private sendMessage(msg: any): void {
 
 // Player Join
 public async playerJoin(templateInfo: TemplateInfo): Promise<void> {
-    await this.connectSocket();
+    
     const joinMessage = {
         action: "player_join",
         template: templateInfo,
