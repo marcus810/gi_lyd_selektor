@@ -7,7 +7,7 @@ import { IntercomInfo, InputInfo, TemplateInfo } from '../types';
 import { template } from '@babel/core'
 import { DatabaseHandler } from '@/scripts/database/database'
 
-export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo ) => {
+export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo, outputToggleStates: {[port: number]: boolean}, onToggleLatch: (port: number) => void, onToggleUnlatchPress: (port: number) => void, onToggleUnlatchRelease: (port: number) => void) => {
 
 
   const db = DatabaseHandler.getInstance()
@@ -46,16 +46,17 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
           textStyle={styles.generalStyles.text}
           selectedStyle={styles.getInfoViewPressableStyleOutput}
           templateInfo={chosenTemplate}
-          onToggleLatch={handleToggleLatch}
-          onToggleUnlatchPress={handleToggleUnlatchPress}
-          onToggleUnlatchRelease={handleToggleUnlatchRelease}
+          isToggled={!!outputToggleStates[intercom.port]}
+          onToggleLatch={onToggleLatch}
+          onToggleUnlatchPress={onToggleUnlatchPress}
+          onToggleUnlatchRelease={onToggleUnlatchRelease}
         />
       ))
 
   );
 };
 
-export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo ) => {
+export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo, inputToggleStates: {[port: number]: boolean}, onToggleInput: (port: number) => void) => {
   const db = DatabaseHandler.getInstance()
   const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
     setToggle((prev) => !prev);
@@ -83,7 +84,8 @@ export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: 
           textStyle={styles.generalStyles.text}
           selectedStyle={styles.getInfoViewPressableStyleInput}
           templateInfo={chosenTemplate}
-          onToggle={handleToggle}
+          isToggled={!!inputToggleStates[input.port]}
+          onToggle={onToggleInput}
         />
       ))
   );

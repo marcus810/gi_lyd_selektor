@@ -20,10 +20,9 @@ import * as misc from '../misc'
     textStyle,
     selectedStyle,
     templateInfo,
-    onToggle
-  }: types.InfoInputViewProps) =>{
-
-      const [toggleState, setToggleState] = useState(false)
+    isToggled,
+    onToggle,
+  }: types.InfoInputViewProps & { isToggled: boolean, onToggle: (port: number) => void }) =>{
       const [minWidth, setMinWidth] = useState(8)
       // Extract maxWidth from outerViewStyle
       const resolvedStyle = StyleSheet.flatten(outerViewStyle)
@@ -31,13 +30,13 @@ import * as misc from '../misc'
           
       const imageSource = { uri: imagePath}
       return(
-      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(setToggleState, toggleState, templateInfo, port)}>
-        <View style={[imageViewStyle, selectedStyle(toggleState)]}>
+      <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} onPress={() => onToggle(port)}>
+        <View style={[imageViewStyle, selectedStyle(isToggled)]}>
           <Image source={imageSource} style={imageStyle}>
           </Image>
         </View>
 
-        <View style={[textViewStyle, selectedStyle(toggleState)]}>
+        <View style={[textViewStyle, selectedStyle(isToggled)]}>
           <Text style={textStyle}>{port.toString()}</Text>
           <Text style={textStyle}>{name}</Text>
         </View>

@@ -12,7 +12,7 @@ import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter, useGlobalSearchParams } from 'expo-router'
 import React, { useState, useEffect } from 'react'
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
 
 
 const selektor = () => {
@@ -29,46 +29,23 @@ const selektor = () => {
   const [intercomOmniListPorts, setIntercomOmniListPorts] = useState<number[]>()
   const [omniIsOn, setOmniIsOn] = useState(false)
 
-
+  const [loading, setLoading] = useState(true);  // Add loading state
 
   const goToIndexScreen = (chosenTemplate: types.TemplateInfo) => {
-    console.log(chosenTemplate)
     db.playerExit(chosenTemplate)
     router.push('/')
   };
 
   const handleSocketDisconnect = () => {
-      console.log('Socket disconnected. Attempting to reconnect...');
-      
-      Alert.alert(
-          "Connection Lost",
-          "We lost connection to the server. Retrying...",
-          [{ text: "OK" }]
-      );
-
       // Handle the case where the socket fails to reconnect after 3 attempts
-      setTimeout(() => {
-          Alert.alert(
-              "Failed to Reconnect",
-              "The connection could not be restored. You will be redirected to the main screen.",
-              [{ text: "OK", onPress: () => goToIndexScreen(chosenTemplate as types.TemplateInfo) }]
-          );
-      }, 7000);  // Show after waiting for a while to give reconnection a chance
+
+      Alert.alert(
+          "Failed to Reconnect",
+          "The connection could not be restored. You will be redirected to the main screen.",
+          [{ text: "OK", onPress: () => goToIndexScreen(chosenTemplate as types.TemplateInfo) }]
+      );
   };
 
-  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo)
-
-  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo)
-
-  const addOmniToList = (intercomList: types.IntercomInfo[]) => {
-    const intercomOmnis: number[] = []
-    intercomList.forEach(intercom => {
-      if (intercom.omniState){
-        intercomOmnis.push(intercom.port)
-      }
-    });
-    return intercomOmnis
-  }
 
   
 
@@ -105,26 +82,34 @@ const selektor = () => {
               }
             }
             
-            console.log(parsedTemplate)
             setChosenTemplate(parsedTemplate)
             const inputs = await db.fetchInputs();  // Await the promise to get the actual data
-            db.playerJoin(parsedTemplate)
+            await db.playerJoin(parsedTemplate)
             setInputInfoList(inputs)
             setIntercomInfoList(parsedTemplate.intercomInfo)
-            setIntercomOmniListPorts(addOmniToList(parsedTemplate.intercomInfo))
+            setIntercomOmniListPorts(db.addOmniToList(parsedTemplate.intercomInfo))
 
             
 
         } catch (error) {
             console.error('Error fetching templates:', error);
             console.log('Full error details in fetchData:', JSON.stringify(error, null, 2));
+            router.push("/template_selector")
+        } finally {
+          setLoading(false)
         }
     };
 
     fetchData();  // Call the async function to fetch the data
 
+    db.intercomInfoListSetter = setIntercomInfoList
+    db.inputInfoListSetter = setInputInfoList
+    db.chosenTemplateSetter = setChosenTemplate
+    db.intercomOmniListPortsSetter = setIntercomOmniListPorts
     
   }, []);  // Empty dependency array to run only once when the component mounts
+
+  
 
   const handleToggleLatch = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo, ports: number[] | undefined) => {
     setToggle((prev) => !prev);
@@ -158,6 +143,114 @@ const selektor = () => {
   //   onToggle: selektorHandler.handleInfoViewToggle
   //   })
 
+  const handleInputToggle = (port: number) => {
+    
+    setInputToggleStates(prev => ({
+      ...prev,
+      [port]: !prev[port],
+    }));
+  
+    if (inputToggleStates[port]) {
+      db.sendInputOff(chosenTemplate as types.TemplateInfo, port);
+    } else {
+      db.sendInputOn(chosenTemplate as types.TemplateInfo, port);
+    }
+  };
+  
+  const handleOutputToggleLatch = (port: number) => {
+    setOutputToggleStates(prev => ({
+      ...prev,
+      [port]: !prev[port],
+    }));
+  
+    if (outputToggleStates[port]) {
+      db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+    } else {
+      db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+    }
+  };
+  
+  const handleOutputToggleUnlatchPress = (port: number) => {
+    setOutputToggleStates(prev => ({
+      ...prev,
+      [port]: true,
+    }));
+    db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+  };
+  
+  const handleOutputToggleUnlatchRelease = (port: number) => {
+    setOutputToggleStates(prev => ({
+      ...prev,
+      [port]: false,
+    }));
+    db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+  };
+
+  useEffect(() => {
+    // Clean up INPUT toggle states
+    const validInputPorts = new Set(inputInfoList.map(input => input.port));
+    const filteredInputToggles: { [port: number]: boolean } = {};
+  
+    for (const port in inputToggleStates) {
+      const portNumber = Number(port);
+      if (validInputPorts.has(portNumber)) {
+        filteredInputToggles[portNumber] = inputToggleStates[portNumber];
+      } else {
+        // If port was removed, send input off
+        db.sendInputOff(chosenTemplate as types.TemplateInfo, portNumber);
+      }
+    }
+  
+    setInputToggleStates(filteredInputToggles);
+  
+    // Clean up INTERCOM (OUTPUT) toggle states
+    const validIntercomPorts = new Set(intercomInfoList.map(intercom => intercom.port));
+    const filteredIntercomToggles: { [port: number]: boolean } = {};
+  
+    for (const port in outputToggleStates) {
+      const portNumber = Number(port);
+      if (validIntercomPorts.has(portNumber)) {
+        filteredIntercomToggles[portNumber] = outputToggleStates[portNumber];
+      } else {
+        // If port was removed, send output off
+        db.sendOutputOff(chosenTemplate as types.TemplateInfo, portNumber);
+      }
+    }
+  
+    setOutputToggleStates(filteredIntercomToggles);
+  
+  }, [inputInfoList, intercomInfoList]);
+
+
+  const [inputToggleStates, setInputToggleStates] = useState<{ [port: number]: boolean }>({});
+  const [outputToggleStates, setOutputToggleStates] = useState<{ [port: number]: boolean }>({});
+
+  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo,
+    outputToggleStates, 
+    handleOutputToggleLatch, 
+    handleOutputToggleUnlatchPress, 
+    handleOutputToggleUnlatchRelease)
+
+  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo,
+    inputToggleStates, 
+    handleInputToggle)
+
+  
+
+  if (loading){
+    return (
+      <GestureHandlerRootView>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+
+        <View style={{...styles.generalStyles.container, alignContent: "center", justifyContent: "center", alignItems: "center"}}>
+          <View style={{alignContent: "center", justifyContent: "center", alignItems: "center"}}>
+            <Text style={{fontSize: 30}}>Loading...</Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    </GestureHandlerRootView>
+    )
+  }
   return (
     <GestureHandlerRootView>
       <SafeAreaView style={styles.generalStyles.safeContainer}>

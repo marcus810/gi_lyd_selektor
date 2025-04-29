@@ -4,30 +4,43 @@ import React, { useState, useEffect } from 'react'
 import { Alert } from 'react-native';  // To show alerts
 import Zeroconf from 'react-native-zeroconf';
 import { DatabaseHandler } from '@/scripts/database/database'
-import { TemplateInfo, InputInfo } from "../scripts/types"; // Adjust the import path if necessary
-import { Link, router } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { v4 as uuidv4 } from 'uuid';  // Import UUID generator
+
+
+
 
 const index = () => {
+  const getUUID = async () => {
+    // Try to get the UUID from AsyncStorage
+    const storedUUID = await AsyncStorage.getItem('device_uuid');
+    
+    // If no UUID exists, return null
+    if (!storedUUID) {
+      return null;
+    }
+  
+    // If a UUID is found, return it
+    return storedUUID;
+  };
+
+  const [uuid, setUuid] = useState<string | null>(null);
+
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
   const db = DatabaseHandler.getInstance()
-
-
-
-    const goToIndexScreen = () => {
-      router.push('/')
-    };
   
+
     const handleSocketDisconnect = () => {
-        console.log('Socket disconnected. Attempting to reconnect...');
+        
   
         // Handle the case where the socket fails to reconnect after 3 attempts
-        setTimeout(() => {
+
             Alert.alert(
-                "Failed to Reconnect",
-                "The connection could not be restored. You will be redirected to the main screen.",
-                [{ text: "OK", onPress: () => goToIndexScreen() }]
+                "Failed to connect",
+                "Check if a Pro Selector Server is running on the local network",
+                [{ text: "OK"}]
             );
-        }, 7000);  // Show after waiting for a while to give reconnection a chance
+          // Show after waiting for a while to give reconnection a chance
     };
 
   const searchForService = (() => {
@@ -73,7 +86,9 @@ const index = () => {
         console.log(api_url)
         db.setApiUrl(api_url)
         db.onSocketDisconnect(handleSocketDisconnect);
-        db.connectSocket()
+
+        db.connectSocket(uuid, false)
+
     });
 
     // Event triggered when a service is removed
@@ -93,6 +108,20 @@ const index = () => {
     zeroconf.scan('http', 'tcp', 'local.');
 
 });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const deviceUUID = await getUUID();
+        setUuid(deviceUUID)
+        console.log('Device UUID:', deviceUUID);  // You can send this to your server for tracking
+      }catch (error) {
+        console.error('Error fetching UUID in Index:', error);
+      }
+    }
+    fetchData()
+    }, []);  // Empty dependency array to run only once when the component mounts
+  
   
 
    

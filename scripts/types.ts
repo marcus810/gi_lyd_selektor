@@ -48,9 +48,9 @@ export type InfoOutputViewProps = BaseInfoViewProps & {
   port: number
   name: string
   intercomInfo: IntercomInfo
-  onToggleLatch: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => void
-  onToggleUnlatchPress: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => void
-  onToggleUnlatchRelease: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, chosenTemplate: TemplateInfo, port: number) => void
+  onToggleLatch: (port: number) => void
+  onToggleUnlatchPress: (port: number) => void
+  onToggleUnlatchRelease: (port: number) => void
 }
 
 export type InfoInputViewProps = BaseInfoViewProps & {
@@ -59,7 +59,6 @@ export type InfoInputViewProps = BaseInfoViewProps & {
     name: string
     imageStyle: StyleProp<ImageStyle>
     imageViewStyle: StyleProp<ViewStyle>
-    onToggle: (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => void
   }
 
 export type InfoViewRef = {

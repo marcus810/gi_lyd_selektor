@@ -17,15 +17,14 @@ import * as misc from '../misc'
     textViewStyle,
     textStyle,
     selectedStyle,
+    isToggled,
     onToggleLatch,
     onToggleUnlatchPress,
     onToggleUnlatchRelease,
     templateInfo
-  }: types.InfoOutputViewProps) =>{
-
-      const [toggleState, setToggleState] = useState(false)
+  }: types.InfoOutputViewProps & { isToggled: boolean}) =>{
       const [minWidth, setMinWidth] = useState(8)
-      const [intercomInfoState, setIntercomInfoState] = useState(intercomInfo)
+    
       // Extract maxWidth from outerViewStyle
       const resolvedStyle = StyleSheet.flatten(outerViewStyle)
       const maxWidth = typeof resolvedStyle?.maxWidth === "number" ? resolvedStyle.maxWidth : 0;
@@ -35,24 +34,24 @@ import * as misc from '../misc'
       return(
       <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} 
       onPress={() => {
-        if (intercomInfoState.omniState) return;
+        if (intercomInfo.omniState) return;
     
-        if (intercomInfoState.latchState) {
-          onToggleLatch(setToggleState, toggleState, templateInfo, port);
+        if (intercomInfo.latchState) {
+          onToggleLatch(port);
         } 
       }}
       onPressIn={() => {
-        if(!intercomInfoState.latchState){
-          onToggleUnlatchPress(setToggleState, templateInfo, port);
+        if(!intercomInfo.latchState){
+          onToggleUnlatchPress(port);
         }
       }}
       onPressOut={() => {
-        if (!intercomInfoState.latchState ) {
-          onToggleUnlatchRelease(setToggleState, templateInfo, port)
+        if (!intercomInfo.latchState ) {
+          onToggleUnlatchRelease(port)
         }
       }}>
 
-        <View style={[textViewStyle, selectedStyle(toggleState, intercomInfo.omniState)]}>
+        <View style={[textViewStyle, selectedStyle(isToggled, intercomInfo.omniState)]}>
           <Text style={textStyle}>{port.toString()}</Text>
           <Text style={textStyle}>{name}</Text>
         </View>
