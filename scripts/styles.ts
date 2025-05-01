@@ -25,13 +25,23 @@ export const templateSelectorStyles = StyleSheet.create({
         borderWidth: 2,
         borderRadius: 10,
     },
+    button:{
+        marginLeft: 5,
+        width: 70,
+        height: 70,
+        justifyContent: "center",
+        alignItems: "center",
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+    },
     title: {
-        alignSelf: "center",
+        marginLeft: 275,
         color: "white",
         fontSize: 50,
+        paddingLeft: 5,
         fontWeight: "bold",
         textAlign: "center",
-        paddingTop: 40
       },
     scrollview: {
         justifyContent: "center"
@@ -72,13 +82,34 @@ export const getInfoViewPressableStyleInput = (isOn: boolean) => ({
     backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(0,0,0,0.5)'
   });
 
-export const getInfoViewPressableStyleOutput = (isOn: boolean, omniState: boolean) => ({
-    backgroundColor: omniState
-        ? 'rgba(9, 9, 99, 0.5)'
-        : isOn
-        ? 'hsla(133, 70.60%, 50.60%, 0.5)'
-        : 'rgba(0,0,0,0.5)',
+export const getInfoViewPressableStyleOutput = (isOn: boolean, omniOrGroupState: boolean, colour: string) => ({
+    backgroundColor: isOn
+    ? 'hsla(133, 70.60%, 50.60%, 0.5)'
+    : omniOrGroupState
+    ? colour
+    : 'rgba(0,0,0,0.5)'
 });
+
+export const getInfoViewPressableStyleOutputOmni = (isOn: boolean, omniState: boolean) => ({
+    backgroundColor: isOn
+    ? 'hsla(133, 70.60%, 50.60%, 0.50)'
+    : omniState
+    ? 'rgba(17, 17, 44, 0.5)'
+    : 'rgba(0,0,0,0.5)'
+});
+
+export const getInfoViewPressableStyleOutputGroup = (isOn: boolean, groupState: boolean) => ({
+    backgroundColor: isOn
+    ? 'rgba(172, 38, 98, 0.5)'
+    : groupState
+    ? 'rgba(77, 36, 36, 0.54)'
+    : 'rgba(0,0,0,0.5)'
+});
+
+export const getInfoViewPressableStyleGroup = (isOn: boolean) => ({
+    backgroundColor: isOn ? 'rgba(172, 38, 98, 0.5)' : 'rgba(77, 36, 36, 0.54)'
+  });
+
 
 export const getInfoViewPressableStyleOmni = (isOn: boolean) => ({
     backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(9, 9, 99, 0.5)'

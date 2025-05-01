@@ -5,6 +5,7 @@ import { Alert } from 'react-native';  // To show alerts
 import Zeroconf from 'react-native-zeroconf';
 import { DatabaseHandler } from '@/scripts/database/database'
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as generalComponent from '../scripts/general_scripts/custom_components'
 import { v4 as uuidv4 } from 'uuid';  // Import UUID generator
 
 
@@ -48,6 +49,7 @@ const index = () => {
     console.log("Initializing Zeroconf...");
 
     setIsButtonDisabled(true);
+    let resolved = false
 
     const zeroconf = new Zeroconf();
     // Start scanning for the specific service (e.g., '_http._tcp' for HTTP services)
@@ -60,7 +62,11 @@ const index = () => {
           zeroconf.removeDeviceListeners();  // Remove device listeners
           zeroconf.removeAllListeners();  // Remove all event listeners
           setIsButtonDisabled(false);
-      }, 6000);  // 6000 milliseconds = 6 seconds
+          if (!resolved){
+            handleSocketDisconnect()
+          }
+
+      }, 4000);  // 6000 milliseconds = 6 seconds
     });
 
     // Event triggered when a service is found (but not fully resolved)
@@ -73,6 +79,7 @@ const index = () => {
 
     // Event triggered when a service is resolved (fully discovered)
     zeroconf.on('resolved', (service) => {
+        resolved = true
         if (service.name === 'gi_lyd_selector') {
             console.log('Resolved service:', service);
             console.log('IP Address:', service.host);  // The IP address of the resolved service
@@ -86,8 +93,8 @@ const index = () => {
         console.log(api_url)
         db.setApiUrl(api_url)
         db.onSocketDisconnect(handleSocketDisconnect);
-
         db.connectSocket(uuid, false)
+        
 
     });
 
@@ -129,13 +136,19 @@ const index = () => {
     <SafeAreaView style={styles.safeContainer}>
     <View style={styles.container}>
       <View style={styles.titleContainer}>
-        <Text style={styles.title}>Gi Lyd Selektor</Text>
+        <Text style={styles.title}>Pro Selector</Text>
       </View>
       <View style={styles.linkContainer}>
         {/* <Link href="/selektor" style={{ marginHorizontal: "auto" }} asChild> */}
-          <Pressable style={styles.button} onPress={searchForService} disabled={isButtonDisabled}>
-            <Text style={styles.buttonText}>Connect</Text>
-          </Pressable>
+
+          {generalComponent.getButton({
+            title: "Connect",
+            buttonStyle: styles.button,
+            textStyle: styles.buttonText,
+            pDefaultButtonBgColor: 'rgba(0,0,150,0.5)',
+            isDisabled: isButtonDisabled,
+            onPress: () => searchForService()
+          })}
         {/* </Link> */}
       </View>
     </View>
@@ -167,10 +180,10 @@ const styles = StyleSheet.create({
   title: {
     alignSelf: "flex-start",
     color: "white",
-    fontSize: 50,
+    fontSize: 90,
     fontWeight: "bold",
     textAlign: "center",
-    paddingTop: 40
+    paddingTop: 200
   },
   button: {
     height: 60,

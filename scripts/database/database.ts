@@ -2,6 +2,15 @@ import { TemplateInfo, InputInfo, IntercomInfo } from "../types"; // Adjust the 
 import { Link, router } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
+import InCallManager from 'react-native-incall-manager';
+
+import {
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCIceCandidate,
+    MediaStream
+  } from 'react-native-webrtc';  
+import RTCIceCandidateEvent from "react-native-webrtc/lib/typescript/RTCIceCandidateEvent";
 
 export class DatabaseHandler {
     private static instance: DatabaseHandler;
@@ -9,13 +18,19 @@ export class DatabaseHandler {
     private onDisconnect: (() => void) | null = null;
     private reconnectAttempts = 0;  // To track the number of reconnection attempts
     private maxReconnectAttempts = 3;  // Maximum number of attempts to reconnect
+    // add these as class members:
+    private pc: RTCPeerConnection | null = null;
+
+    public remoteStream: MediaStream | null = null;
     public api_url: string;
     public uuid: string | null
     public templateInfo: TemplateInfo | null
     public inputInfoListSetter: React.Dispatch<React.SetStateAction<InputInfo[]>> | null
     public intercomInfoListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
     public chosenTemplateSetter: React.Dispatch<React.SetStateAction<TemplateInfo | undefined>> | null
-    public intercomOmniListPortsSetter: React.Dispatch<React.SetStateAction<number[] | undefined>> | null
+    public intercomOmniListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
+    public intercomGroupListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
+    public timecodeSetter: ((newTimecode: string) => void) | null
   
     // Private constructor to prevent direct instantiation
     private constructor() {
@@ -25,7 +40,10 @@ export class DatabaseHandler {
       this.intercomInfoListSetter = null
       this.inputInfoListSetter = null
       this.chosenTemplateSetter = null
-      this.intercomOmniListPortsSetter = null
+      this.intercomOmniListSetter = null
+      this.intercomGroupListSetter = null
+      this.remoteStream = null
+      this.timecodeSetter = null
     }
   
     // Public static method to get the instance of the class
@@ -40,10 +58,15 @@ export class DatabaseHandler {
         this.onDisconnect = callback;
     }
 
+
 public async uuidOrNo(uuid: string | null): Promise<void> {
     try{
         if (uuid){
+            console.log("uuid")
+            console.log(uuid)
             const [expired, templateInfo] = await this.getTemplateFromUuid(uuid);
+            console.log(expired)
+            console.log(templateInfo)
 
             if (expired){
                 router.push("/template_selector")
@@ -61,37 +84,83 @@ public async uuidOrNo(uuid: string | null): Promise<void> {
     }
 }
 
-public addOmniToList (intercomList: IntercomInfo[]): number[] {
-    const intercomOmnis: number[] = []
+public addOmniToList (intercomList: IntercomInfo[]): IntercomInfo[] {
+    const intercomOmnis: IntercomInfo[] = []
     intercomList.forEach(intercom => {
       if (intercom.omniState){
-        intercomOmnis.push(intercom.port)
+        intercomOmnis.push(intercom)
       }
     });
     return intercomOmnis
   }
 
+public addGroupToList (intercomList: IntercomInfo[]): IntercomInfo[] {
+    const intercomGroups: IntercomInfo[] = []
+    intercomList.forEach(intercom => {
+      if (intercom.groupState && !intercom.omniState){
+        intercomGroups.push(intercom)
+      }
+    });
+    return intercomGroups
+  }
+
+/**
+ * Route the given remote MediaStream’s audio to the speaker and start playback.
+ * 
+ * @param stream - The remote MediaStream you received in your 'track' handler.
+ */
+public playRemoteStream(stream: MediaStream) {
+    // 1) Start the audio session in “call” mode; this engages WebRTC’s audio stack.
+
+
+  
+    // 3) (Optional) Adjust the WebRTC audio-track volume.
+    //    react-native-webrtc auto-plays the track once the connection is up.
+    stream.getAudioTracks();
+}
+public closeSocket(): void {
+    if (this.socket) {
+      // 1) Prevent further reconnect attempts
+      this.reconnectAttempts = this.maxReconnectAttempts;
+
+      // 2) Remove all event handlers so no callbacks fire after close
+      this.socket.onopen = null;
+      this.socket.onmessage = null;
+      this.socket.onerror = null;
+      this.socket.onclose = null;
+
+      // 3) Close the socket (no-op if already closed) :contentReference[oaicite:0]{index=0}
+      this.socket.close(1000, "Client closing");  
+
+      // 4) Clear our reference
+      this.socket = null;
+    }
+  }
 public async connectSocket(uuid: string | null = null, isReconnect: boolean): Promise<void> {
     if (uuid){
         this.uuid = uuid
-
     }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this.socket = new WebSocket(`${this.api_url}/ws/player`); // adjust!
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+          };
 
-        this.socket.onopen = () => {
+        this.socket.onopen = async () => {
             console.log("WebSocket connection established");
             this.reconnectAttempts = 0; // Reset the reconnect attempts on successful connection
-            this.uuidOrNo(this.uuid)
+            
+
+
             if (!isReconnect){
                 this.uuidOrNo(this.uuid)
             }
             else{
                 if (this.templateInfo){
-                    this.playerJoin(this.templateInfo)
-                }
+                    await this.playerJoin(this.templateInfo)
+                };
             }
-        };
+       }
         
 
         this.socket.onclose = () => {
@@ -110,15 +179,84 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
         };
 
         // Handle incoming messages
-        this.socket.onmessage = (event) => {
+        this.socket.onmessage = async (event) => {
+
+            
             
             const msg = JSON.parse(event.data);
+
+            if (msg.action === 'webrtc_offer') {
+                // --- Received offer from server ---
+                this.pc = new RTCPeerConnection(configuration);
+            
+                // Handle local ICE candidates by sending them to the server
+                this.pc.addEventListener(
+                    'icecandidate',
+                    (e: RTCIceCandidateEvent<'icecandidate'>) => {
+                      if (e.candidate) {
+                        if (this.socket && this.socket.readyState === WebSocket.OPEN){
+                        this.socket.send(JSON.stringify({
+                          action: 'webrtc_ice',
+                          candidate: {
+                            candidate:      e.candidate.candidate,
+                            sdpMid:         e.candidate.sdpMid,
+                            sdpMLineIndex:  e.candidate.sdpMLineIndex
+                          }
+                        }));}
+                      }
+                    }
+                  );
+                  
+                this.pc.addEventListener<'track'>(
+                    'track',
+                    (e) => {
+                      // e is inferred as RTCTrackEvent<'track'>
+                      if (e.streams[0]) {
+                        this.playRemoteStream(e.streams[0]);
+                      }
+                    }
+                  );
+                // Apply the server's SDP offer as the remote description
+                const offerDesc = new RTCSessionDescription(msg.offer);
+                await this.pc.setRemoteDescription(offerDesc);
+            
+                // Create answer and set as local description
+                const answerDesc = await this.pc.createAnswer();
+                await this.pc.setLocalDescription(answerDesc);
+            
+                // Send the answer back to server
+                if (this.socket && this.socket.readyState === WebSocket.OPEN){
+                this.socket.send(JSON.stringify({
+                  action: 'webrtc_answer',
+                  answer: { type: answerDesc.type, sdp: answerDesc.sdp }
+                }));}
+            
+              } else if (msg.action === 'webrtc_ice') {
+                // --- Received ICE candidate from server ---
+                if (this.pc) {
+                  try {
+                    const candidate = new RTCIceCandidate(msg.candidate);
+                    await this.pc.addIceCandidate(candidate);
+                  } catch (err) {
+                    console.log('Error adding ICE candidate:', err);
+                  }
+                }
+              }
+            
+            if (msg.action === "ltc"){
+                
+                if (this.socket && this.socket.readyState === WebSocket.OPEN && this.timecodeSetter){
+                    this.timecodeSetter(msg.timecode)
+                }
+            }
+
             if (msg.action === "template_released") {
                 console.log(`Template ${msg.template_id} has been released.`);
 
                 // Close the WebSocket connection after handling the "template_released" message
                 if (this.socket && this.socket.readyState === WebSocket.OPEN){
-                    this.socket.close();
+                    this.templateInfo = null
+                    this.closeSocket()
                     router.push("/")
                 }
                 console.log("WebSocket connection closed after template release.");
@@ -128,7 +266,8 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                     this.chosenTemplateSetter && 
                     this.inputInfoListSetter && 
                     this.intercomInfoListSetter && 
-                    this.intercomOmniListPortsSetter)
+                    this.intercomOmniListSetter &&
+                    this.intercomGroupListSetter )
                     {
                     if (msg.inputs){
                         const inputInfoList: InputInfo[] = msg.inputs.map((input: any) => ({
@@ -143,7 +282,8 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                     if (msg.template){
                         this.chosenTemplateSetter(msg.template)
                         this.intercomInfoListSetter(msg.template.intercomInfo)
-                        this.intercomOmniListPortsSetter(this.addOmniToList(msg.template.intercomInfo))
+                        this.intercomOmniListSetter(this.addOmniToList(msg.template.intercomInfo))
+                        this.intercomGroupListSetter(this.addGroupToList(msg.template.intercomInfo))
                     }
 
 
@@ -212,6 +352,8 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
         const handleMessage = (event: MessageEvent) => {
             const message = JSON.parse(event.data);
             if (message.action === "get_template_from_uuid") {
+                console.log("msg")
+                console.log(message)
                 this.socket?.removeEventListener('message', handleMessage);
 
                 if (message.error) {
@@ -228,7 +370,10 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
                             micPort: template.micPort,
                             intercomInfo: template.intercomInfo || [],
                             delay: template.delay,
-                            omniState: template.omniState
+                            omniState: template.omniState,
+                            groupState: template.groupState,
+                            deviceUuid: template.device_uuid,
+                            deviceExpiryDate: template.deviceExpiryDate
                         };
                     }
                     
@@ -238,7 +383,7 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
         };
 
         this.socket.addEventListener('message', handleMessage);
-
+        
         this.socket.send(JSON.stringify(fetchTemplateRequest));
     });
 }
@@ -283,6 +428,7 @@ public async playerJoin(templateInfo: TemplateInfo): Promise<void> {
 
         // Send the player join message
         this.socket.send(JSON.stringify(joinMessage));
+        
     });
 }
 // Send Input On
@@ -532,7 +678,10 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
                             micPort: template.micPort,
                             intercomInfo: template.intercomInfo || [],
                             delay: template.delay,
-                            omniState: template.omniState
+                            omniState: template.omniState,
+                            groupState: template.groupState,
+                            deviceUuid: template.deviceUuid,
+                            deviceExpiryDate: template.deviceExpiryDate
                         }));
                         resolve(templateInfoList);
                     }

@@ -1,12 +1,14 @@
 {
   "expo": {
-    "name": "gi_lyd_selektor",
-    "slug": "gi_lyd_selektor",
-    "scheme": "gilydselektor",
+    
+    "name": "Pro Selektor",
+    "slug": "Pro Selektor",
+    "scheme": "Pro Selektor",
     "version": "1.0.0",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "orientation": "landscape",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -15,7 +17,8 @@
           "_http._tcp"
         ],
         "NSLocalNetworkUsageDescription": "This app needs access to the local network to detect devices.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "Your app needs microphone access for audio streaming."
       },
       "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor"
     },

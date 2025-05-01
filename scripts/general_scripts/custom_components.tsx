@@ -11,7 +11,8 @@ import * as types from './types'
     textStyle, 
     pDefaultButtonBgColor, 
     pPressedButtonBgColor,
-    onPress
+    onPress,
+    isDisabled = false
     }: 
     types.ButtonProps) =>{
       const defaultButtonBgColor = pDefaultButtonBgColor || 'rgba(0,0,0,0.5)'
@@ -22,7 +23,7 @@ import * as types from './types'
         style={[buttonStyle, {backgroundColor: buttonBgColor}]} 
         onPressIn={() => setButtonBgColor(pressedButtonBgColor)} 
         onPressOut={() => setButtonBgColor(defaultButtonBgColor)} 
-        onPress={onPress}>
+        onPress={onPress} disabled={isDisabled}>
           <Text style={textStyle}>{title}</Text>
         </Pressable>
       )
@@ -49,7 +50,8 @@ import * as types from './types'
     textStyle, 
     pDefaultButtonBgColor, 
     pPressedButtonBgColor, 
-    onPress
+    onPress,
+    isDisabled
     }: 
     types.ButtonProps) => {
       return(
@@ -59,7 +61,8 @@ import * as types from './types'
         textStyle={textStyle} 
         pDefaultButtonBgColor={pDefaultButtonBgColor} 
         pPressedButtonBgColor={pPressedButtonBgColor} 
-        onPress={onPress}>
+        onPress={onPress}
+        isDisabled={isDisabled}>
         </Button>   
       )
     }

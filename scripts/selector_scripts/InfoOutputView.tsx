@@ -29,6 +29,9 @@ import * as misc from '../misc'
       const resolvedStyle = StyleSheet.flatten(outerViewStyle)
       const maxWidth = typeof resolvedStyle?.maxWidth === "number" ? resolvedStyle.maxWidth : 0;
 
+      if(!intercomInfo.omniState && intercomInfo.groupState){
+
+      }
 
           
       return(
@@ -36,22 +39,26 @@ import * as misc from '../misc'
       onPress={() => {
         if (intercomInfo.omniState) return;
     
-        if (intercomInfo.latchState) {
-          onToggleLatch(port);
+        if (intercomInfo.latchState || intercomInfo.groupState) {
+          onToggleLatch(port, intercomInfo.groupState);
         } 
       }}
       onPressIn={() => {
+        if (intercomInfo.omniState || intercomInfo.groupState) return;
         if(!intercomInfo.latchState){
           onToggleUnlatchPress(port);
         }
       }}
       onPressOut={() => {
+        if (intercomInfo.omniState || intercomInfo.groupState) return;
         if (!intercomInfo.latchState ) {
           onToggleUnlatchRelease(port)
         }
       }}>
 
-        <View style={[textViewStyle, selectedStyle(isToggled, intercomInfo.omniState)]}>
+        <View style={[textViewStyle, selectedStyle(isToggled, !intercomInfo.omniState && intercomInfo.groupState
+        ? intercomInfo.groupState
+        : intercomInfo.omniState)]}>
           <Text style={textStyle}>{port.toString()}</Text>
           <Text style={textStyle}>{name}</Text>
         </View>

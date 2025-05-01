@@ -7,7 +7,7 @@ import { IntercomInfo, InputInfo, TemplateInfo } from '../types';
 import { template } from '@babel/core'
 import { DatabaseHandler } from '@/scripts/database/database'
 
-export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo, outputToggleStates: {[port: number]: boolean}, onToggleLatch: (port: number) => void, onToggleUnlatchPress: (port: number) => void, onToggleUnlatchRelease: (port: number) => void) => {
+export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo, outputToggleStates: {[port: number]: boolean}, onToggleLatch: (port: number, groupState: boolean) => void, onToggleUnlatchPress: (port: number) => void, onToggleUnlatchRelease: (port: number) => void) => {
 
 
   const db = DatabaseHandler.getInstance()
@@ -44,7 +44,9 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
           outerViewStyle={styles.outputStyles.infoContainer}
           textViewStyle={styles.outputStyles.textContainer}
           textStyle={styles.generalStyles.text}
-          selectedStyle={styles.getInfoViewPressableStyleOutput}
+          selectedStyle={!intercom.omniState && intercom.groupState
+            ? styles.getInfoViewPressableStyleOutputGroup
+            : styles.getInfoViewPressableStyleOutputOmni}
           templateInfo={chosenTemplate}
           isToggled={!!outputToggleStates[intercom.port]}
           onToggleLatch={onToggleLatch}

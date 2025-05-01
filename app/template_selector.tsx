@@ -24,11 +24,13 @@ const template_selektor = () => {
 
 
   useEffect(() => {
+    
 
     const fetchData = async () => {
         try {
             const templates = await db.fetchTemplates();  // Await the promise to get the actual data
-            setTemplateInfoList(templates)  // Set the state with the resolved data
+            const unclaimed = templates.filter(t => t.deviceUuid === null);  
+            setTemplateInfoList(unclaimed)  // Set the state with the resolved data
             
         } catch (error) {
             console.error('Error fetching templates:', error);
@@ -39,6 +41,7 @@ const template_selektor = () => {
     fetchData();  // Call the async function to fetch the data
 
         const goToIndexScreen = () => {
+          
           router.push('/')
         };
       
@@ -54,8 +57,13 @@ const template_selektor = () => {
                 );
             }, 500);  // Show after waiting for a while to give reconnection a chance
         };
-    db.onSocketDisconnect(handleSocketDisconnect);
+        db.onSocketDisconnect(handleSocketDisconnect);
   }, []);  // Empty dependency array to run only once when the component mounts
+
+  const goToIndexScreen = () => {
+    db.closeSocket()
+    router.push('/')
+  };
 
   const TemplateInfoArr = TemplateContainer(templateInfoList)
 
@@ -63,11 +71,21 @@ const template_selektor = () => {
     <GestureHandlerRootView>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         
-        
+
             
           <View style={styles.templateSelectorStyles.container}>
- 
-            <Text style={styles.templateSelectorStyles.title}>Choose template</Text>
+            <View style={{height:80, flexDirection: "row", alignItems: 'center'}}>
+              {generalComponent.getButton({
+                title: "Go Back",
+                buttonStyle: styles.templateSelectorStyles.button,
+                textStyle: styles.generalStyles.text,
+                onPress: () => goToIndexScreen()
+              })}
+              <View style={{alignSelf: "center"}}>
+                <Text style={styles.templateSelectorStyles.title}>Choose template</Text>
+              </View>
+            </View>
+            
             
             <ScrollView 
               horizontal={false}

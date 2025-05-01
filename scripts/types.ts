@@ -6,6 +6,7 @@ export type IntercomInfo = {
   port: number
   name: string
   omniState: boolean
+  groupState: boolean
   latchState: boolean
 }
 
@@ -24,6 +25,9 @@ export type TemplateInfo = {
   intercomInfo: IntercomInfo[]
   delay: number
   omniState: boolean
+  groupState: boolean
+  deviceUuid: string | null
+  deviceExpiryDate: string | null
 }
 
 export type TemplateViewProps = {
@@ -48,7 +52,7 @@ export type InfoOutputViewProps = BaseInfoViewProps & {
   port: number
   name: string
   intercomInfo: IntercomInfo
-  onToggleLatch: (port: number) => void
+  onToggleLatch: (port: number, groupState: boolean) => void
   onToggleUnlatchPress: (port: number) => void
   onToggleUnlatchRelease: (port: number) => void
 }

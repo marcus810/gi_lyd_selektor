@@ -8,5 +8,6 @@ export type ButtonProps = {
     pDefaultButtonBgColor?: string
     pPressedButtonBgColor?: string
     onPress?: () => void
+    isDisabled?: boolean
 }
 
