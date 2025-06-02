@@ -29,17 +29,15 @@ import * as misc from '../misc'
       const resolvedStyle = StyleSheet.flatten(outerViewStyle)
       const maxWidth = typeof resolvedStyle?.maxWidth === "number" ? resolvedStyle.maxWidth : 0;
 
-      if(!intercomInfo.omniState && intercomInfo.groupState){
-
-      }
-
           
       return(
       <Pressable style={[outerViewStyle, {minWidth: misc.getLandscapeWidth() / minWidth}]} 
       onPress={() => {
-        if (intercomInfo.omniState) return;
+        if (intercomInfo.latchState || intercomInfo.omniState) {
+          onToggleLatch(port, intercomInfo.omniState);
+        } 
     
-        if (intercomInfo.latchState || intercomInfo.groupState) {
+        else if (intercomInfo.latchState || intercomInfo.groupState) {
           onToggleLatch(port, intercomInfo.groupState);
         } 
       }}
@@ -59,7 +57,6 @@ import * as misc from '../misc'
         <View style={[textViewStyle, selectedStyle(isToggled, !intercomInfo.omniState && intercomInfo.groupState
         ? intercomInfo.groupState
         : intercomInfo.omniState)]}>
-          <Text style={textStyle}>{port.toString()}</Text>
           <Text style={textStyle}>{name}</Text>
         </View>
       </Pressable>

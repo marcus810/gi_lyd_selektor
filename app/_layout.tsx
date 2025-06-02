@@ -34,6 +34,8 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="selektor" options={{ headerShown: false }} />
         <Stack.Screen name="template_selector" options={{ headerShown: false }} />
+        <Stack.Screen name="selector_choice" options={{ headerShown: false }} />
+        <Stack.Screen name="listener_selector" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

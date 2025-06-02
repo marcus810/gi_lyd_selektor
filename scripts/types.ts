@@ -25,7 +25,9 @@ export type TemplateInfo = {
   intercomInfo: IntercomInfo[]
   delay: number
   omniState: boolean
+  omniName: string
   groupState: boolean
+  groupName: string
   deviceUuid: string | null
   deviceExpiryDate: string | null
 }
@@ -63,6 +65,10 @@ export type InfoInputViewProps = BaseInfoViewProps & {
     name: string
     imageStyle: StyleProp<ImageStyle>
     imageViewStyle: StyleProp<ViewStyle>
+    width: number
+    inputAmount: number
+    parentWidth: number
+    parentHeight: number
   }
 
 export type InfoViewRef = {

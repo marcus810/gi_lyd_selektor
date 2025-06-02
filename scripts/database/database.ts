@@ -2,15 +2,20 @@ import { TemplateInfo, InputInfo, IntercomInfo } from "../types"; // Adjust the 
 import { Link, router } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
+import { VolumeManager } from 'react-native-volume-manager';
 import InCallManager from 'react-native-incall-manager';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 import {
     RTCPeerConnection,
     RTCSessionDescription,
     RTCIceCandidate,
-    MediaStream
+    MediaStream,
+    MediaStreamTrack as RNMediaStreamTrack
   } from 'react-native-webrtc';  
 import RTCIceCandidateEvent from "react-native-webrtc/lib/typescript/RTCIceCandidateEvent";
+import SystemSetting from 'react-native-system-setting';
+
 
 export class DatabaseHandler {
     private static instance: DatabaseHandler;
@@ -31,6 +36,10 @@ export class DatabaseHandler {
     public intercomOmniListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
     public intercomGroupListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
     public timecodeSetter: ((newTimecode: string) => void) | null
+    public remoteAudioTrack: RNMediaStreamTrack | null = null;
+    private volumeListener: any = null;
+    private volumeListenerId: string | null = null;
+    public isMuted: boolean = true
   
     // Private constructor to prevent direct instantiation
     private constructor() {
@@ -44,6 +53,12 @@ export class DatabaseHandler {
       this.intercomGroupListSetter = null
       this.remoteStream = null
       this.timecodeSetter = null
+
+        this.requestMicrophonePermission()
+        // Start the call and route audio to speaker
+        InCallManager.start({ media: 'audio' });
+        InCallManager.setSpeakerphoneOn(false);
+
     }
   
     // Public static method to get the instance of the class
@@ -62,14 +77,10 @@ export class DatabaseHandler {
 public async uuidOrNo(uuid: string | null): Promise<void> {
     try{
         if (uuid){
-            console.log("uuid")
-            console.log(uuid)
             const [expired, templateInfo] = await this.getTemplateFromUuid(uuid);
-            console.log(expired)
-            console.log(templateInfo)
 
             if (expired){
-                router.push("/template_selector")
+                router.push("/selector_choice")
             }
             else{
                 const templateData = JSON.stringify(templateInfo); // Serialize the object to pass as a string
@@ -77,12 +88,79 @@ public async uuidOrNo(uuid: string | null): Promise<void> {
             }
         }
         else{
-            router.push("/template_selector")
+            router.push("/selector_choice")
         }
     } catch (error) {
-        console.log("error trying to get template from uuid: " + error)
     }
 }
+
+public async requestMicrophonePermission() {
+  if (Platform.OS !== 'android') {
+    // On iOS, the system will automatically prompt based on Info.plist entries.
+    return true;
+  }
+
+  try {
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      {
+        title: 'Microphone Permission',
+        message: 'This app requires access to your microphone.',
+        buttonNeutral: 'Ask Me Later',
+        buttonNegative: 'Cancel',
+        buttonPositive: 'OK',
+      }
+    );
+
+    if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+      return true;
+    } else {
+      console.warn('Microphone permission denied on Android');
+      return false;
+    }
+  } catch (err) {
+    console.warn('Failed to request microphone permission:', err);
+    return false;
+  }
+}
+
+  // Override playRemoteStream to start volume monitoring:
+
+  // Called when the remote stream arrives
+public async playRemoteStream() {
+    if (this.remoteAudioTrack) {
+        console.log(this.isMuted)
+      InCallManager.setSpeakerphoneOn(!this.isMuted);
+      this.remoteAudioTrack.enabled = !this.isMuted;
+      
+    }
+
+    // … your existing WebRTC setup …
+
+    // 1) Log and apply the *initial* volume
+    // try {
+    //  const { volume: initialVol } = await VolumeManager.getVolume();
+    //  console.log('Initial volume:', initialVol);
+    //  this.handleVolumeChange(initialVol);
+    // } catch (err) {
+    // }
+
+    // 2) Subscribe to *future* volume changes
+    // if (!this.volumeListener) {
+    //  this.volumeListener = VolumeManager.addVolumeListener(result => {
+    //    this.handleVolumeChange(result.volume);
+    //  });
+    //}
+  }
+
+  // Your existing mute logic
+  private handleVolumeChange(volume: number) {
+    const isMuted = volume <= 0.10;
+    if (this.remoteAudioTrack) {
+      this.remoteAudioTrack.enabled = !isMuted;
+    }
+  }
+
 
 public addOmniToList (intercomList: IntercomInfo[]): IntercomInfo[] {
     const intercomOmnis: IntercomInfo[] = []
@@ -109,15 +187,9 @@ public addGroupToList (intercomList: IntercomInfo[]): IntercomInfo[] {
  * 
  * @param stream - The remote MediaStream you received in your 'track' handler.
  */
-public playRemoteStream(stream: MediaStream) {
-    // 1) Start the audio session in “call” mode; this engages WebRTC’s audio stack.
 
 
-  
-    // 3) (Optional) Adjust the WebRTC audio-track volume.
-    //    react-native-webrtc auto-plays the track once the connection is up.
-    stream.getAudioTracks();
-}
+        
 public closeSocket(): void {
     if (this.socket) {
       // 1) Prevent further reconnect attempts
@@ -136,18 +208,22 @@ public closeSocket(): void {
       this.socket = null;
     }
   }
-public async connectSocket(uuid: string | null = null, isReconnect: boolean): Promise<void> {
+public async connectSelectorSocket(uuid: string | null = null, isReconnect: boolean): Promise<void> {
+    
     if (uuid){
         this.uuid = uuid
     }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        
         this.socket = new WebSocket(`${this.api_url}/ws/player`); // adjust!
         const configuration = {
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
           };
 
         this.socket.onopen = async () => {
-            console.log("WebSocket connection established");
+
+            
+
             this.reconnectAttempts = 0; // Reset the reconnect attempts on successful connection
             
 
@@ -164,14 +240,15 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
         
 
         this.socket.onclose = () => {
-            console.log('WebSocket disconnected');
+  
+
             if (this.reconnectAttempts < this.maxReconnectAttempts) {
-                console.log("ATTEMPT: " + this.reconnectAttempts)
+
                 this.reconnectAttempts++;
-                console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-                setTimeout(() => this.connectSocket(null, true), 2000);  // Retry after 2 seconds
+
+                setTimeout(() => this.connectSelectorSocket(null, true), 2000);  // Retry after 2 seconds
             } else {
-                console.log('Max reconnection attempts reached. Could not reconnect.');
+
                 if (this.onDisconnect) {
                     this.onDisconnect();  // Notify when all attempts fail
                 }
@@ -187,6 +264,7 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
 
             if (msg.action === 'webrtc_offer') {
                 // --- Received offer from server ---
+
                 this.pc = new RTCPeerConnection(configuration);
             
                 // Handle local ICE candidates by sending them to the server
@@ -211,8 +289,9 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                     'track',
                     (e) => {
                       // e is inferred as RTCTrackEvent<'track'>
-                      if (e.streams[0]) {
-                        this.playRemoteStream(e.streams[0]);
+                      if (e.track) {
+                        this.remoteAudioTrack = e.track;
+                        this.playRemoteStream()
                       }
                     }
                   );
@@ -230,6 +309,7 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                   action: 'webrtc_answer',
                   answer: { type: answerDesc.type, sdp: answerDesc.sdp }
                 }));}
+
             
               } else if (msg.action === 'webrtc_ice') {
                 // --- Received ICE candidate from server ---
@@ -238,7 +318,7 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                     const candidate = new RTCIceCandidate(msg.candidate);
                     await this.pc.addIceCandidate(candidate);
                   } catch (err) {
-                    console.log('Error adding ICE candidate:', err);
+
                   }
                 }
               }
@@ -251,7 +331,7 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
             }
 
             if (msg.action === "template_released") {
-                console.log(`Template ${msg.template_id} has been released.`);
+
 
                 // Close the WebSocket connection after handling the "template_released" message
                 if (this.socket && this.socket.readyState === WebSocket.OPEN){
@@ -259,7 +339,7 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                     this.closeSocket()
                     router.push("/")
                 }
-                console.log("WebSocket connection closed after template release.");
+
             }
             if (msg.action === "live_update") {
                 if (this.socket && this.socket.readyState === WebSocket.OPEN && 
@@ -290,13 +370,6 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
                 }
             }
         };
-
-
-            
-        this.socket.onerror = (error) => {
-            console.error("WebSocket error :", error);
-        }
-        
     }
 }
 
@@ -304,8 +377,6 @@ public async connectSocket(uuid: string | null = null, isReconnect: boolean): Pr
 private sendMessage(msg: any): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify(msg));
-    } else {
-        console.error("WebSocket is not open.");
     }
 }
 
@@ -332,7 +403,7 @@ public async updateUuid(templateInfo: TemplateInfo): Promise<void> {
     };
     this.sendMessage(msg);
     } catch (error) {
-        console.log("uuid error database: " + error)
+       
     }
     
 }
@@ -352,8 +423,7 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
         const handleMessage = (event: MessageEvent) => {
             const message = JSON.parse(event.data);
             if (message.action === "get_template_from_uuid") {
-                console.log("msg")
-                console.log(message)
+
                 this.socket?.removeEventListener('message', handleMessage);
 
                 if (message.error) {
@@ -371,7 +441,9 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
                             intercomInfo: template.intercomInfo || [],
                             delay: template.delay,
                             omniState: template.omniState,
+                            omniName: template.omniName,
                             groupState: template.groupState,
+                            groupName: template.groupName,
                             deviceUuid: template.device_uuid,
                             deviceExpiryDate: template.deviceExpiryDate
                         };
@@ -387,6 +459,56 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
         this.socket.send(JSON.stringify(fetchTemplateRequest));
     });
 }
+
+
+public async listenerJoin(templateInfo: TemplateInfo) {
+    return new Promise<void>((resolve, reject) => {
+        // Define the join message
+        const joinMessage = {
+            action: "listener_join",
+            template: templateInfo
+        };
+
+        // Check WebSocket state
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            reject(new Error('WebSocket is not connected'));
+            return;
+        }
+
+        // Listen for a one-time response
+        const handleMessage = (event: MessageEvent) => {
+            const message = JSON.parse(event.data);
+
+            if (message.action === "listener_join") {
+                // Remove event listener after receiving the response
+                this.socket?.removeEventListener('message', handleMessage);
+
+                if (message.error) {
+                    reject(new Error(message.error));  // Reject if there’s an error in the response
+                } else {
+                    // Resolve when the response is successfully received
+                    resolve();
+                }
+            }
+        };
+
+        // Add event listener to handle the response
+        this.socket.addEventListener('message', handleMessage);
+
+        // Send the player join message
+        this.socket.send(JSON.stringify(joinMessage));
+        
+    });
+}
+
+public async listenerChange(templateInfo: TemplateInfo): Promise<void> {
+    const msg = {
+        action: "listener_change",
+        template: templateInfo,
+    };
+    this.sendMessage(msg);
+}
+
 
 
 
@@ -579,6 +701,15 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
     //         console.log("Error sending data:", error);
     //     }
     // }
+    public async listenerExit(templateInfo: TemplateInfo | undefined): Promise<void> {
+        const msg = {
+            action: "listener_exit",
+            template: templateInfo,
+            
+        };
+        this.closeSocket()
+        this.sendMessage(msg);
+    }
 
     public async playerExit(templateInfo: TemplateInfo | undefined): Promise<void> {
         const msg = {
@@ -679,7 +810,9 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
                             intercomInfo: template.intercomInfo || [],
                             delay: template.delay,
                             omniState: template.omniState,
+                            omniName: template.omniName,
                             groupState: template.groupState,
+                            groupName: template.groupName,
                             deviceUuid: template.deviceUuid,
                             deviceExpiryDate: template.deviceExpiryDate
                         }));

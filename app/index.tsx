@@ -1,12 +1,13 @@
 
 import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform} from 'react-native'
+
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import React, { useState, useEffect } from 'react'
 import { Alert } from 'react-native';  // To show alerts
 import Zeroconf from 'react-native-zeroconf';
 import { DatabaseHandler } from '@/scripts/database/database'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as generalComponent from '../scripts/general_scripts/custom_components'
-import { v4 as uuidv4 } from 'uuid';  // Import UUID generator
 
 
 
@@ -45,8 +46,6 @@ const index = () => {
     };
 
   const searchForService = (() => {
-    
-    console.log("Initializing Zeroconf...");
 
     setIsButtonDisabled(true);
     let resolved = false
@@ -55,9 +54,7 @@ const index = () => {
     // Start scanning for the specific service (e.g., '_http._tcp' for HTTP services)
     zeroconf.on('start', () => {
       
-        console.log('Scan started...');
         setTimeout(() => {
-          console.log('Stopping Zeroconf scan after 6 seconds...');
           zeroconf.stop();  // Stop scanning
           zeroconf.removeDeviceListeners();  // Remove device listeners
           zeroconf.removeAllListeners();  // Remove all event listeners
@@ -70,45 +67,33 @@ const index = () => {
     });
 
     // Event triggered when a service is found (but not fully resolved)
-    zeroconf.on('found', (service) => {
-        if (service === 'gi_lyd_selector') {
-            console.log('Service found:', service);
-            console.log('Service is found but not fully resolved yet.');
-        }
-    });
 
     // Event triggered when a service is resolved (fully discovered)
     zeroconf.on('resolved', (service) => {
-        resolved = true
+        
         if (service.name === 'gi_lyd_selector') {
-            console.log('Resolved service:', service);
-            console.log('IP Address:', service.host);  // The IP address of the resolved service
-            console.log('Port:', service.port);       // The port of the resolved service
+            resolved = true
+                    // Stop any previous scans to ensure a clean start
+            zeroconf.stop();  // Stop scanning
+            zeroconf.removeDeviceListeners();  // Remove device listeners
+            zeroconf.removeAllListeners();  // Remove all event listeners
+            const api_url = `http://${service.txt.local_ip}:${service.txt.port}`
+            db.setApiUrl(api_url)
+            db.onSocketDisconnect(handleSocketDisconnect);
+            db.connectSelectorSocket(uuid, false)
         }
-        // Stop any previous scans to ensure a clean start
-        zeroconf.stop();  // Stop scanning
-        zeroconf.removeDeviceListeners();  // Remove device listeners
-        zeroconf.removeAllListeners();  // Remove all event listeners
-        const api_url = `http://${service.txt.local_ip}:${service.txt.port}`
-        console.log(api_url)
-        db.setApiUrl(api_url)
-        db.onSocketDisconnect(handleSocketDisconnect);
-        db.connectSocket(uuid, false)
+
         
 
     });
 
     // Event triggered when a service is removed
-    zeroconf.on('remove', (name) => {
-        console.log('Service removed:', name);
-    });
 
     // Event triggered when an error occurs
     zeroconf.on('error', (err) => {
       zeroconf.stop();  // Stop scanning
       zeroconf.removeDeviceListeners();  // Remove device listeners
       zeroconf.removeAllListeners();  // Remove all event listeners
-        console.error('Zeroconf error:', err);
     });
 
     // Start scanning for the service (adjust the service type accordingly)
@@ -117,16 +102,20 @@ const index = () => {
 });
 
   useEffect(() => {
+    StatusBar.setHidden(true);
+
     const fetchData = async () => {
       try {
         const deviceUUID = await getUUID();
         setUuid(deviceUUID)
-        console.log('Device UUID:', deviceUUID);  // You can send this to your server for tracking
+
       }catch (error) {
-        console.error('Error fetching UUID in Index:', error);
+
       }
     }
     fetchData()
+
+    
     }, []);  // Empty dependency array to run only once when the component mounts
   
   
@@ -183,7 +172,6 @@ const styles = StyleSheet.create({
     fontSize: 90,
     fontWeight: "bold",
     textAlign: "center",
-    paddingTop: 200
   },
   button: {
     height: 60,

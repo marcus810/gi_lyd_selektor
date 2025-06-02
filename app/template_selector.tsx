@@ -33,8 +33,6 @@ const template_selektor = () => {
             setTemplateInfoList(unclaimed)  // Set the state with the resolved data
             
         } catch (error) {
-            console.error('Error fetching templates:', error);
-            console.log('Full error details in fetchData:', JSON.stringify(error, null, 2));
         }
     };
 
@@ -46,7 +44,6 @@ const template_selektor = () => {
         };
       
         const handleSocketDisconnect = () => {
-            console.log('Socket disconnected. Attempting to reconnect...');
       
             // Handle the case where the socket fails to reconnect after 3 attempts
             setTimeout(() => {
@@ -74,14 +71,16 @@ const template_selektor = () => {
 
             
           <View style={styles.templateSelectorStyles.container}>
-            <View style={{height:80, flexDirection: "row", alignItems: 'center'}}>
+            <View style={{height:80, display: "flex", flexDirection: "row", alignItems: 'center', justifyContent: "center"}}>
+              <View style={{alignSelf: "center", justifyContent: "flex-start", flex:0.5}}>
               {generalComponent.getButton({
                 title: "Go Back",
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
                 onPress: () => goToIndexScreen()
               })}
-              <View style={{alignSelf: "center"}}>
+              </View>
+              <View style={{alignSelf: "center", justifyContent: "center", flex:5}}>
                 <Text style={styles.templateSelectorStyles.title}>Choose template</Text>
               </View>
             </View>

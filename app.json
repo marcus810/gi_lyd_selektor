@@ -1,9 +1,8 @@
 {
   "expo": {
-    
     "name": "Pro Selektor",
-    "slug": "Pro Selektor",
-    "scheme": "Pro Selektor",
+    "slug": "gi_lyd_selektor",
+    "scheme": "pro-selektor",
     "version": "1.0.0",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
@@ -18,15 +17,19 @@
         ],
         "NSLocalNetworkUsageDescription": "This app needs access to the local network to detect devices.",
         "ITSAppUsesNonExemptEncryption": false,
-        "NSMicrophoneUsageDescription": "Your app needs microphone access for audio streaming."
+        "NSMicrophoneUsageDescription": "Your app needs microphone access for audio streaming.",
+        "NSCameraUsageDescription": "This app needs camera access"
       },
       "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor"
     },
     "android": {
       "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
-        "CHANGE_WIFI_MULTICAST_STATE"
+        "CHANGE_WIFI_MULTICAST_STATE",
+        "WAKE_LOCK"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",

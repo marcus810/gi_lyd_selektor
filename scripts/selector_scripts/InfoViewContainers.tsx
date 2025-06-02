@@ -6,8 +6,9 @@ import * as styles from '../styles'
 import { IntercomInfo, InputInfo, TemplateInfo } from '../types';
 import { template } from '@babel/core'
 import { DatabaseHandler } from '@/scripts/database/database'
+import * as misc from '../misc'
 
-export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo, outputToggleStates: {[port: number]: boolean}, onToggleLatch: (port: number, groupState: boolean) => void, onToggleUnlatchPress: (port: number) => void, onToggleUnlatchRelease: (port: number) => void) => {
+export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemplate: TemplateInfo, outputToggleStates: {[port: number]: {toggled: boolean, activated: boolean}}, onToggleLatch: (port: number, groupState: boolean) => void, onToggleUnlatchPress: (port: number) => void, onToggleUnlatchRelease: (port: number) => void) => {
 
 
   const db = DatabaseHandler.getInstance()
@@ -45,10 +46,12 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
           textViewStyle={styles.outputStyles.textContainer}
           textStyle={styles.generalStyles.text}
           selectedStyle={!intercom.omniState && intercom.groupState
-            ? styles.getInfoViewPressableStyleOutputGroup
-            : styles.getInfoViewPressableStyleOutputOmni}
+          ? styles.getInfoViewPressableStyleOutputGroup
+          : !intercom.omniState && !intercom.groupState
+          ? styles.getInfoViewPressableStyleOutput
+          : styles.getInfoViewPressableStyleOutputOmni}
           templateInfo={chosenTemplate}
-          isToggled={!!outputToggleStates[intercom.port]}
+          isToggled={outputToggleStates[intercom.port]?.toggled ?? false}
           onToggleLatch={onToggleLatch}
           onToggleUnlatchPress={onToggleUnlatchPress}
           onToggleUnlatchRelease={onToggleUnlatchRelease}
@@ -58,7 +61,7 @@ export const InfoViewOuputContainer = ( intercomInfo: IntercomInfo[], chosenTemp
   );
 };
 
-export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo, inputToggleStates: {[port: number]: boolean}, onToggleInput: (port: number) => void) => {
+export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: TemplateInfo, inputToggleStates: {[port: number]: boolean}, onToggleInput: (port: number) => void, parentWidth: number, parentHeight:number) => {
   const db = DatabaseHandler.getInstance()
   const handleToggle = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: TemplateInfo, port: number) => {
     setToggle((prev) => !prev);
@@ -71,7 +74,12 @@ export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: 
 
   };
 
-  
+  const inputAmount = inputInfo.length
+  const windowWidth = misc.getLandscapeWidth()
+
+
+
+  const visibleCount = Math.min(inputAmount);
   return (
       inputInfo.map((input, index) => (
         <InfoInputView
@@ -88,6 +96,10 @@ export const InfoViewInputContainer = ( inputInfo: InputInfo[], chosenTemplate: 
           templateInfo={chosenTemplate}
           isToggled={!!inputToggleStates[input.port]}
           onToggle={onToggleInput}
+          width={windowWidth}
+          inputAmount={visibleCount}
+          parentWidth={parentWidth}
+          parentHeight={parentHeight}
         />
       ))
   );

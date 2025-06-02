@@ -1,7 +1,7 @@
 
 
 /* libraries */
-import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable} from 'react-native'
+import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable, LayoutChangeEvent} from 'react-native'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
 /* our files */
@@ -12,9 +12,7 @@ import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter, useGlobalSearchParams } from 'expo-router'
 import React, { useState, useEffect, useRef } from 'react'
-import { 
-  RTCView        // ← add this
-} from 'react-native-webrtc';
+
 
 
 const selektor = () => {
@@ -24,7 +22,7 @@ const selektor = () => {
   const { template } = useGlobalSearchParams(); // Access the 'template' query parameter
 
   const [inputInfoList, setInputInfoList] = useState<types.InputInfo[]>([])
-  const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([]);
+
   const [intercomInfoList, setIntercomInfoList] = useState<types.IntercomInfo[]>([]);
   const [chosenTemplate, setChosenTemplate] = useState<types.TemplateInfo>();
 
@@ -32,7 +30,12 @@ const selektor = () => {
   const [intercomGroupList, setIntercomGroupList] = useState<types.IntercomInfo[]>([])
   
   const [inputToggleStates, setInputToggleStates] = useState<{ [port: number]: boolean }>({});
-  const [outputToggleStates, setOutputToggleStates] = useState<{ [port: number]: boolean }>({});
+  const [outputToggleStates, setOutputToggleStates] = useState<{
+    [port: number]: {
+      toggled: boolean;
+      activated: boolean;
+    };
+  }>({});
 
   const [omniIsOn, setOmniIsOn] = useState(false)
   const [groupIsOn, setGroupIsOn] = useState(false)
@@ -43,6 +46,8 @@ const selektor = () => {
   const [, forceRender] = useState(0); // Dummy state to trigger updates
   const lastRenderTime = useRef(0);
   const throttleDuration = 100; // in milliseconds, e.g., 100ms = max 10 updates/sec
+
+  const [isMuted, setIsMuted] = useState(!db.isMuted);
 
   const goToIndexScreen = (chosenTemplate: types.TemplateInfo) => {
     db.playerExit(chosenTemplate)
@@ -69,7 +74,6 @@ const selektor = () => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'inactive') {
         // Call your function here
-        console.log('App is closed.');
         // You can perform your cleanup or save state here
         appStateListener.remove()
       }
@@ -80,7 +84,6 @@ const selektor = () => {
     // Add event listener to listen for changes in app state
     const appStateListener = AppState.addEventListener('change', handleAppStateChange);
 
-    console.log("selektor loaded")
     const fetchData = async () => {
         try {
             
@@ -91,7 +94,7 @@ const selektor = () => {
                 // Parse the template data from the query string
                 parsedTemplate = JSON.parse(decodeURIComponent(template as string));
               } catch (error) {
-                console.error("Error parsing template data:", error);
+
               }
             }
             
@@ -100,7 +103,6 @@ const selektor = () => {
             const inputs = await db.fetchInputs();  // Await the promise to get the actual data
 
             await db.playerJoin(parsedTemplate)
-            console.log(parsedTemplate.intercomInfo)
             setInputInfoList(inputs)
             setIntercomInfoList(parsedTemplate.intercomInfo)
             setIntercomOmniList(db.addOmniToList(parsedTemplate.intercomInfo))
@@ -109,8 +111,6 @@ const selektor = () => {
             
 
         } catch (error) {
-            console.error('Error fetching templates:', error);
-            console.log('Full error details in fetchData:', JSON.stringify(error, null, 2));
             router.push("/template_selector")
         } finally {
           setLoading(false)
@@ -147,82 +147,114 @@ const selektor = () => {
     return () => cancelAnimationFrame(animationFrameId);
   }, []);
 
+const clearAllOutputs = (
+  chosenTemplate: types.TemplateInfo | undefined,
+  ports: types.InputInfo[] | undefined
+) => {
+  console.log("abe")
+  const portNumbers = ports?.map(p => p.port) ?? [];
+  db.sendOutputOffOmni(chosenTemplate, portNumbers);
 
-  const handleToggleLatchGroup = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo, ports: types.IntercomInfo[] | undefined) => {
-    setToggle((prev) => !prev);
-    
-    const portNumbers = ports?.filter(p => outputToggleStates[p.port]).map(p => p.port) ?? [];
-        if (toggle){
-          const portNumbers = ports?.map(p => p.port) ?? [];
-          db.sendOutputOffOmni(chosenTemplate, portNumbers)
-        }
-        else{
-          db.sendOutputOnOmni(chosenTemplate, portNumbers)
-        }
+    for (const port of portNumbers) {
+      setOutputToggleStates(prev => ({
+        ...prev,
+        [port]: {
+          ...prev[port],
+          toggled: false, // or toggle logic
 
-    };
+        }
+      }));
+    }
+}
+
+const handleToggleLatchGroup = (
+  setToggle: React.Dispatch<React.SetStateAction<boolean>>,
+  toggle: boolean,
+  chosenTemplate: types.TemplateInfo,
+  ports: types.IntercomInfo[] | undefined
+) => {
+  setToggle((prev) => !prev);
+  const portNumbers = ports?.map(p => p.port) ?? [];
+
+  if (toggle) {
+    // Filter only ports where toggled === true && activated === false
+    const filteredPorts = portNumbers.filter(port => 
+      outputToggleStates[port]?.toggled && !outputToggleStates[port]?.activated
+    );
+
+    db.sendOutputOffOmni(chosenTemplate, filteredPorts);
+
+    for (const port of filteredPorts) {
+      setOutputToggleStates(prev => ({
+        ...prev,
+        [port]: {
+          ...prev[port],
+          toggled: false, // or toggle logic
+
+        }
+      }));
+    }
+  } else {
+    db.sendOutputOnOmni(chosenTemplate, portNumbers);
+
+    for (const port of portNumbers) {
+      setOutputToggleStates(prev => ({
+        ...prev,
+        [port]: {
+          ...prev[port],
+          toggled: true,
+        }
+      }));
+    }
+  }
+};
+
   
 
-  const handleToggleLatchOmni = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo, ports: types.IntercomInfo[] | undefined) => {
-    setToggle((prev) => !prev);
-    
-    const portNumbers = ports?.map(p => p.port) ?? [];
-        if (toggle){
-          db.sendOutputOffOmni(chosenTemplate, portNumbers)
-        }
-        else{
-          db.sendOutputOnOmni(chosenTemplate, portNumbers)
-        }
-        for (const intercom of ports ?? []) {
-          setOutputToggleStates(prev => ({
-            ...prev,
-            [intercom.port]: !prev[intercom.port],
-          }));
-        }
-    };
+
 
     const handleToggleUnlatchPressGroup = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
       setToggle((prev) => !prev);
-      const portNumbers = ports?.filter(p => outputToggleStates[p.port]).map(p => p.port) ?? [];
-      db.sendOutputOnOmni(chosenTemplate, portNumbers)   
+      const portNumbers = ports?.map(p => p.port) ?? [];
 
+      db.sendOutputOnOmni(chosenTemplate, portNumbers);
+
+      for (const port of portNumbers) {
+        setOutputToggleStates(prev => ({
+          ...prev,
+          [port]: {
+            ...prev[port],
+            toggled: true,
+          }
+        }));
+      }
   
       
     };
 
-  const handleToggleUnlatchPressOmni = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
-    setToggle((prev) => !prev);
-    const portNumbers = ports?.map(p => p.port) ?? [];
-    db.sendOutputOnOmni(chosenTemplate, portNumbers)   
-    for (const intercom of ports ?? []) {
-      setOutputToggleStates(prev => ({
-        ...prev,
-        [intercom.port]: !prev[intercom.port],
-      }));
-    }
-
-    
-  };
 
   const handleToggleUnlatchReleaseGroup = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
     setToggle((prev) => !prev);
-    const portNumbers = ports?.filter(p => outputToggleStates[p.port]).map(p => p.port) ?? [];
-    db.sendOutputOffOmni(chosenTemplate, portNumbers) 
-  };
-  
-  const handleToggleUnlatchReleaseOmni = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
-    setToggle((prev) => !prev);
     const portNumbers = ports?.map(p => p.port) ?? [];
-    db.sendOutputOffOmni(chosenTemplate, portNumbers) 
+    // Filter only ports where toggled === true && activated === false
+    const filteredPorts = portNumbers.filter(port => 
+      outputToggleStates[port]?.toggled && !outputToggleStates[port]?.activated
+    );
 
-    
-    for (const intercom of ports ?? []) {
+    db.sendOutputOffOmni(chosenTemplate, filteredPorts);
+
+    for (const port of filteredPorts) {
       setOutputToggleStates(prev => ({
         ...prev,
-        [intercom.port]: !prev[intercom.port],
+        [port]: {
+          ...prev[port],
+          toggled: false, // or toggle logic
+
+        }
       }));
     }
   };
+  
 
   /* userefs */
 
@@ -252,72 +284,93 @@ const selektor = () => {
   };
   
   const handleOutputToggleLatch = (port: number, groupState: boolean) => {
-    setOutputToggleStates(prev => ({
-      ...prev,
-      [port]: !prev[port],
-    }));
+    setOutputToggleStates(prev => {
+      const isOn = prev[port]?.toggled ?? false;
+      const newState = !isOn;
 
-      if (outputToggleStates[port]) {
-        db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
-      } else if (!groupState) {
-        db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
-      }
-    
+      return {
+        ...prev,
+        [port]: {
+          toggled: newState,
+          activated: newState,
+        },
+      };
+    });
+
+    const isCurrentlyOn = outputToggleStates[port]?.toggled ?? false;
+
+    if (isCurrentlyOn) {
+      db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+    } else {
+      db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+    }
   };
   
   const handleOutputToggleUnlatchPress = (port: number) => {
     setOutputToggleStates(prev => ({
       ...prev,
-      [port]: true,
+      [port]: {
+        toggled: true,
+        activated: true,
+      },
     }));
+
     db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
   };
   
   const handleOutputToggleUnlatchRelease = (port: number) => {
     setOutputToggleStates(prev => ({
       ...prev,
-      [port]: false,
+      [port]: {
+        toggled: false,
+        activated: false,
+      },
     }));
+
     db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
   };
 
-  useEffect(() => {
-    // Clean up INPUT toggle states
-    const validInputPorts = new Set(inputInfoList.map(input => input.port));
-    const filteredInputToggles: { [port: number]: boolean } = {};
-  
-    for (const port in inputToggleStates) {
-      const portNumber = Number(port);
-      if (validInputPorts.has(portNumber)) {
-        filteredInputToggles[portNumber] = inputToggleStates[portNumber];
-      } else {
-        // If port was removed, send input off
-        db.sendInputOff(chosenTemplate as types.TemplateInfo, portNumber);
-      }
+useEffect(() => {
+  // Clean up INPUT toggle states (still booleans)
+  const validInputPorts = new Set(inputInfoList.map(input => input.port));
+  const filteredInputToggles: { [port: number]: boolean } = {};
+
+  for (const port in inputToggleStates) {
+    const portNumber = Number(port);
+    if (validInputPorts.has(portNumber)) {
+      filteredInputToggles[portNumber] = inputToggleStates[portNumber];
+    } else {
+      db.sendInputOff(chosenTemplate as types.TemplateInfo, portNumber);
     }
-  
-    setInputToggleStates(filteredInputToggles);
-  
-    // Clean up INTERCOM (OUTPUT) toggle states
-    const validIntercomPorts = new Set(intercomInfoList.map(intercom => intercom.port));
-    const filteredIntercomToggles: { [port: number]: boolean } = {};
-  
-    for (const port in outputToggleStates) {
-      const portNumber = Number(port);
-      if (validIntercomPorts.has(portNumber)) {
-        filteredIntercomToggles[portNumber] = outputToggleStates[portNumber];
-      } else {
-        // If port was removed, send output off
-        db.sendOutputOff(chosenTemplate as types.TemplateInfo, portNumber);
-      }
+  }
+
+  setInputToggleStates(filteredInputToggles);
+
+  // Clean up INTERCOM (OUTPUT) toggle states (now with toggled + activated)
+  const validIntercomPorts = new Set(intercomInfoList.map(intercom => intercom.port));
+  const filteredIntercomToggles: { [port: number]: { toggled: boolean; activated: boolean } } = {};
+
+  for (const port in outputToggleStates) {
+    const portNumber = Number(port);
+    if (validIntercomPorts.has(portNumber)) {
+      filteredIntercomToggles[portNumber] = outputToggleStates[portNumber];
+    } else {
+      db.sendOutputOff(chosenTemplate as types.TemplateInfo, portNumber);
     }
+  }
+
+  setOutputToggleStates(filteredIntercomToggles);
+}, [inputInfoList, intercomInfoList]);
   
-    setOutputToggleStates(filteredIntercomToggles);
-  
-  }, [inputInfoList, intercomInfoList]);
 
+    // 1. Add state to hold your scrollObjectContainer size
+  const [listSize, setListSize] = useState({ width: 0, height: 0 });
 
-
+  // 2. Handler for onLayout
+  function onListLayout(e: LayoutChangeEvent) {
+    const { width, height } = e.nativeEvent.layout;
+    setListSize({ width, height });
+  }
 
   const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo,
     outputToggleStates, 
@@ -328,10 +381,25 @@ const selektor = () => {
 
   const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo,
     inputToggleStates, 
-    handleInputToggle)
-
+    handleInputToggle,
+    listSize.width,
+    listSize.height)
   
-
+  const handleToggleMute = () => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      if (next) { 
+        db.isMuted = false
+        db.playRemoteStream()
+        console.log('Now Listening');
+      } else {
+        db.isMuted = true
+        db.playRemoteStream()
+        console.log('Muted');
+      }
+      return next;
+    });
+  };
   if (loading){
     return (
       <GestureHandlerRootView>
@@ -349,39 +417,25 @@ const selektor = () => {
   return (
     <GestureHandlerRootView>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
-      <RTCView 
-        streamURL={db.remoteStream?.toURL()} 
-        style={{ width: 0, height: 0 }} 
-      />
         <View style={styles.generalStyles.container}>
         
-          <View style={styles.inputStyles.container}>
-            <ScrollView 
-              horizontal={true}
-              bounces={false}
-            >
-              <View style={styles.generalStyles.scrollObjectContainer}>
+          <View style={styles.inputStyles.container} onLayout={onListLayout}>
+
+
 
                 {inputInfoArr}
 
-              </View>
-            </ScrollView>
+
+
           </View>
           
           {generalComponent.getSelectorLineBreak()}
+      
+            <View style={styles.outputStyles.container}>
 
-          <View style={styles.outputStyles.container}>
-            <ScrollView 
-              horizontal={true}
-              bounces={false}
-              >
-              <View style={styles.generalStyles.scrollObjectContainer}>
+                  {outputInfoArr}
 
-                {outputInfoArr}
-
-              </View>
-            </ScrollView>
-          </View>
+            </View>
 
           {generalComponent.getSelectorLineBreak()}
           
@@ -403,7 +457,7 @@ const selektor = () => {
                       handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
                     }
                   }}>
-              <Text style={styles.generalStyles.text}>Group</Text>
+              <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
             </Pressable>
 
             {/* {generalComponent.getButton({
@@ -412,28 +466,33 @@ const selektor = () => {
               textStyle: styles.generalStyles.text,
               onPress: () => selektorHandler.zoomInfoViewIn(outputRefArr, inputRefArr)
             })} */}
-
-            <View style={styles.generalStyles.timecode}>
-              <Text style={styles.generalStyles.text}>{timecodeRef.current}</Text>
-            </View>
-
             <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleOmni(omniIsOn)]} 
                   onPress={() => {
                     if (chosenTemplate?.omniState) {
-                      handleToggleLatchOmni(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                      handleToggleLatchGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
                     } 
                   }}
                   onPressIn={() => {
                     if(!chosenTemplate?.omniState){
-                      handleToggleUnlatchPressOmni(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                      handleToggleUnlatchPressGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
                     }
                   }}
                   onPressOut={() => {
                     if(!chosenTemplate?.omniState){
-                      handleToggleUnlatchReleaseOmni(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                      handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
                     }
                   }}>
-              <Text style={styles.generalStyles.text}>Omni</Text>
+              <Text style={styles.generalStyles.text}>{chosenTemplate?.omniName}</Text>
+            </Pressable>
+
+            <View style={styles.generalStyles.timecode}>
+              <Text style={styles.generalStyles.text}>{chosenTemplate?.name || 'Name Unknown'}</Text>
+              <Text style={styles.generalStyles.text}>{timecodeRef.current}</Text>
+            </View>
+
+            <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleInput(isMuted)]} 
+                  onPress={handleToggleMute}>
+              <Text style={styles.generalStyles.text}>Listen</Text>
             </Pressable>
                   
 {/* 
