@@ -3,11 +3,13 @@ import { ImageSourcePropType, ViewStyle, TextStyle, ImageStyle, StyleProp} from 
 
 //also known as outputInfo
 export type IntercomInfo = {
+  id: number
   port: number
   name: string
   omniState: boolean
   groupState: boolean
   latchState: boolean
+  type: string
 }
 
 export type InputInfo = {
@@ -16,12 +18,20 @@ export type InputInfo = {
   picturePath: string
 }
 
+export type ActivatedInputInfo = {
+  id: number
+  port: number
+  name: string
+  isActive: boolean
+}
+
 export type TemplateInfo = {
   id: number
   name: string
   noDelayPort: number
   delayPort: number
   micPort: number
+  intercomOutputPort: number
   intercomInfo: IntercomInfo[]
   delay: number
   omniState: boolean
@@ -30,15 +40,19 @@ export type TemplateInfo = {
   groupName: string
   deviceUuid: string | null
   deviceExpiryDate: string | null
+  lastActivationUtc: string
+  autoDuck: boolean
+  autoDuckGain: number
+  isMaster: boolean
+  isSlave: boolean
+  slaveColor: string
 }
 
 export type TemplateViewProps = {
   name: string
-  outerViewStyle: StyleProp<ViewStyle>
-  textViewStyle: StyleProp<ViewStyle>
-  textStyle: StyleProp<TextStyle>
   templateInfo: TemplateInfo
   onPress: (template: TemplateInfo) => void
+  isTablet: boolean
 }
 
 
@@ -54,9 +68,9 @@ export type InfoOutputViewProps = BaseInfoViewProps & {
   port: number
   name: string
   intercomInfo: IntercomInfo
-  onToggleLatch: (port: number, groupState: boolean) => void
-  onToggleUnlatchPress: (port: number) => void
-  onToggleUnlatchRelease: (port: number) => void
+  onToggleLatch: (id: number, port: number, groupState: boolean, type: string) => void
+  onToggleUnlatchPress: (id: number, port: number, type: string) => void
+  onToggleUnlatchRelease: (id: number, port: number, type: string) => void
 }
 
 export type InfoInputViewProps = BaseInfoViewProps & {
@@ -69,6 +83,7 @@ export type InfoInputViewProps = BaseInfoViewProps & {
     inputAmount: number
     parentWidth: number
     parentHeight: number
+    templateInfo: TemplateInfo
   }
 
 export type InfoViewRef = {

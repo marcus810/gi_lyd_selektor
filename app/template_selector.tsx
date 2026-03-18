@@ -12,8 +12,8 @@ import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter } from 'expo-router'
 import React, { useState, useEffect } from 'react'
-
-
+import * as Device from 'expo-device';
+import * as misc from './../scripts/misc'
 
 const template_selektor = () => {
   /*routing*/
@@ -21,10 +21,15 @@ const template_selektor = () => {
   const db = DatabaseHandler.getInstance()
   
   const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([]);
-
+  const [isTablet, setIsTablet] = useState(false);
 
   useEffect(() => {
-    
+      const fetchDeviceType = async () => {
+        const type = await Device.getDeviceTypeAsync();
+        setIsTablet(type === Device.DeviceType.TABLET);
+      };
+  
+      fetchDeviceType();
 
     const fetchData = async () => {
         try {
@@ -62,9 +67,9 @@ const template_selektor = () => {
     router.push('/')
   };
 
-  const TemplateInfoArr = TemplateContainer(templateInfoList)
+  const TemplateInfoArr = TemplateContainer(templateInfoList, isTablet)
 
-  return (
+  if (isTablet) return (
     <GestureHandlerRootView>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         
@@ -91,6 +96,46 @@ const template_selektor = () => {
               bounces={false}
             >
               <View style={styles.templateSelectorStyles.scrollObjectContainer}>
+
+                {TemplateInfoArr}
+
+              </View>
+            </ScrollView>
+
+          </View>
+
+      </SafeAreaView>
+    </GestureHandlerRootView>
+  )
+  else return (
+    <GestureHandlerRootView>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+        
+
+            
+          <View style={styles.templateSelectorStyles.container}>
+
+              <View style={{alignSelf: "center", justifyContent: "space-between", flex:0.12, flexDirection: "row", width: "100%", alignContent: "center", alignItems: "center"}}>
+              {generalComponent.getButton({
+                title: "Go Back",
+                buttonStyle: styles.templateSelectorStyles.button,
+                textStyle: styles.generalStyles.text,
+                onPress: () => goToIndexScreen()
+                
+              })}
+              <Text style={{...styles.templateSelectorStyles.title, fontSize: 30, justifyContent:"center", alignItems:"center"}}>Choose template</Text>
+              </View>
+
+
+            
+            
+            <ScrollView 
+              
+              horizontal={false}
+              bounces={false}
+              style={{ flex:1}}
+            >
+              <View style={{...styles.templateSelectorStyles.scrollObjectContainer, width: misc.getLandscapeHeight()}}>
 
                 {TemplateInfoArr}
 

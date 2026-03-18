@@ -7,10 +7,12 @@ import { DatabaseHandler } from '@/scripts/database/database'
 import TemplateView from './TemplateView'
 import { Link, router } from 'expo-router'
 
-export const TemplateContainer = ( templateInfo: TemplateInfo[] ) => {
+export const TemplateContainer = ( templateInfo: TemplateInfo[], isTablet: boolean ) => {
     const db = DatabaseHandler.getInstance()
     const onPress = (template: TemplateInfo) => {
             const templateData = JSON.stringify(template); // Serialize the object to pass as a string
+            console.log("in onpress in templatecontainer")
+            console.log(templateData)
             db.updateUuid(template)
             router.push(`/selektor?template=${encodeURIComponent(templateData)}`)
           }
@@ -20,11 +22,9 @@ export const TemplateContainer = ( templateInfo: TemplateInfo[] ) => {
           <TemplateView
             key={index}
             name={template.name.toString()}
-            outerViewStyle={styles.templateSelectorStyles.infoContainer}
-            textViewStyle={styles.templateSelectorStyles.textContainer}
-            textStyle={styles.templateSelectorStyles.text}
             templateInfo={template}
             onPress={onPress}
+            isTablet={isTablet}
           />
         ))
   

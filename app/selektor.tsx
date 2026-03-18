@@ -1,7 +1,7 @@
 
 
 /* libraries */
-import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable, LayoutChangeEvent} from 'react-native'
+import { View, Text, SafeAreaView, AppState, AppStateStatus, Pressable, LayoutChangeEvent,Dimensions} from 'react-native'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
 /* our files */
@@ -11,8 +11,8 @@ import * as generalComponent from '../scripts/general_scripts/custom_components'
 import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter, useGlobalSearchParams } from 'expo-router'
-import React, { useState, useEffect, useRef } from 'react'
-
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import * as Device from 'expo-device';
 
 
 const selektor = () => {
@@ -30,13 +30,42 @@ const selektor = () => {
   const [intercomGroupList, setIntercomGroupList] = useState<types.IntercomInfo[]>([])
   
   const [inputToggleStates, setInputToggleStates] = useState<{ [port: number]: boolean }>({});
-  const [outputToggleStates, setOutputToggleStates] = useState<{
-    [port: number]: {
+
+    // 1. Add state to hold your scrollObjectContainer size
+  const [listSize, setListSize] = useState({ width: 0, height: 0 });
+  const [isAppActive, setIsAppActive] = useState(
+    AppState.currentState === "active"
+  );
+
+  const [intercomToggleStates, setIntercomToggleStates] = useState<{
+    [id: number]: {
       toggled: boolean;
       activated: boolean;
     };
   }>({});
+  const PAGE_SIZE_PHONE = 16;
 
+const outputCount = useMemo(
+  () => intercomInfoList.filter(ic => ic.type === "output").length,
+  [intercomInfoList]
+);
+const inputCount = useMemo(
+  () => intercomInfoList.filter(ic => ic.type === "input").length,
+  [intercomInfoList]
+);
+
+// How many “tiles pages” are needed (based on the larger of the two lists)
+const outputPages = useMemo(() => {
+  const maxCount = Math.max(outputCount, inputCount);
+  return Math.ceil(maxCount / PAGE_SIZE_PHONE);
+}, [outputCount, inputCount]);
+
+// Total pages in the phone pager: 1 input page + N output pages
+const totalPages = 1 + outputPages;
+  const screenWidth = Dimensions.get("window").width;
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  const [isTablet, setIsTablet] = useState(false);
   const [omniIsOn, setOmniIsOn] = useState(false)
   const [groupIsOn, setGroupIsOn] = useState(false)
 
@@ -48,11 +77,13 @@ const selektor = () => {
   const throttleDuration = 100; // in milliseconds, e.g., 100ms = max 10 updates/sec
 
   const [isMuted, setIsMuted] = useState(!db.isMuted);
-
+      const [, setTick] = useState(0)
   const goToIndexScreen = (chosenTemplate: types.TemplateInfo) => {
     db.playerExit(chosenTemplate)
     router.push('/')
   };
+
+  const [inputSliderValue, setInputSliderValue] = useState(1);
 
   const handleSocketDisconnect = () => {
       // Handle the case where the socket fails to reconnect after 3 attempts
@@ -65,24 +96,32 @@ const selektor = () => {
   };
 
 
-  
+function onListLayout(e: LayoutChangeEvent) {
+  const { width, height } = e.nativeEvent.layout;
+  setListSize({ width, height });
+}
+
+useEffect(() => {
+  const sub = AppState.addEventListener("change", (nextAppState: AppStateStatus) => {
+    setIsAppActive(nextAppState === "active");
+  });
+
+  return () => sub.remove();
+}, []);
 
 
   useEffect(() => {
-
-    // Function to run when app goes to the background or is closed
-    const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'inactive') {
-        // Call your function here
-        // You can perform your cleanup or save state here
-        appStateListener.remove()
-      }
+    
+    const fetchDeviceType = async () => {
+      const type = await Device.getDeviceTypeAsync();
+      setIsTablet(type === Device.DeviceType.TABLET);
     };
+    fetchDeviceType();
+
     // Register the disconnection handler
     db.onSocketDisconnect(handleSocketDisconnect);
 
-    // Add event listener to listen for changes in app state
-    const appStateListener = AppState.addEventListener('change', handleAppStateChange);
+    db.requestMicrophonePermission()
 
     const fetchData = async () => {
         try {
@@ -101,12 +140,19 @@ const selektor = () => {
             setChosenTemplate(parsedTemplate)
 
             const inputs = await db.fetchInputs();  // Await the promise to get the actual data
+            
+
+            
 
             await db.playerJoin(parsedTemplate)
+            const activatedInputs = await db.fetchActivatedInputs()
+            const activatedIntercoms = await db.fetchActivatedIntercoms()
             setInputInfoList(inputs)
             setIntercomInfoList(parsedTemplate.intercomInfo)
             setIntercomOmniList(db.addOmniToList(parsedTemplate.intercomInfo))
             setIntercomGroupList(db.addGroupToList(parsedTemplate.intercomInfo))
+            toggleActivatedInputs(activatedInputs)
+            toggleActivatedIntercoms(activatedIntercoms)
 
             
 
@@ -127,133 +173,155 @@ const selektor = () => {
     db.timecodeSetter = (newTimecode: string) => {
       timecodeRef.current = newTimecode;
     };
+
     
   }, []);  // Empty dependency array to run only once when the component mounts
 
-  useEffect(() => {
-    let animationFrameId: number;
-  
-    const update = (time: number) => {
-      if (time - lastRenderTime.current >= throttleDuration) {
-        forceRender(n => n + 1);  // Trigger re-render
-        lastRenderTime.current = time;
-      }
-  
-      animationFrameId = requestAnimationFrame(update);
-    };
-  
-    animationFrameId = requestAnimationFrame(update);
-  
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+useEffect(() => {
+  if (!isAppActive) return;
 
-const clearAllOutputs = (
-  chosenTemplate: types.TemplateInfo | undefined,
-  ports: types.InputInfo[] | undefined
-) => {
-  console.log("abe")
-  const portNumbers = ports?.map(p => p.port) ?? [];
-  db.sendOutputOffOmni(chosenTemplate, portNumbers);
+  let animationFrameId: number;
 
-    for (const port of portNumbers) {
-      setOutputToggleStates(prev => ({
-        ...prev,
-        [port]: {
-          ...prev[port],
-          toggled: false, // or toggle logic
-
-        }
-      }));
+  const update = (time: number) => {
+    if (time - lastRenderTime.current >= throttleDuration) {
+      forceRender(n => n + 1);
+      lastRenderTime.current = time;
     }
-}
+    animationFrameId = requestAnimationFrame(update);
+  };
+
+  animationFrameId = requestAnimationFrame(update);
+  return () => cancelAnimationFrame(animationFrameId);
+}, [isAppActive]);
+
+
 
 const handleToggleLatchGroup = (
   setToggle: React.Dispatch<React.SetStateAction<boolean>>,
-  toggle: boolean,
-  chosenTemplate: types.TemplateInfo,
-  ports: types.IntercomInfo[] | undefined
+  toggle: boolean, // current state (true means we are turning OFF)
+  chosenTemplate: types.TemplateInfo | undefined,
+  ports: types.IntercomInfo[] | undefined,
+  otherIsOn: boolean,
+  otherPorts: types.IntercomInfo[] | undefined
 ) => {
-  setToggle((prev) => !prev);
-  const portNumbers = ports?.map(p => p.port) ?? [];
+  setToggle(prev => !prev);
+
+  const selectedIds = ports?.map(p => p.id) ?? [];
+  const otherIds = new Set((otherPorts ?? []).map(p => p.id));
 
   if (toggle) {
-    // Filter only ports where toggled === true && activated === false
-    const filteredPorts = portNumbers.filter(port => 
-      outputToggleStates[port]?.toggled && !outputToggleStates[port]?.activated
-    );
+    // TURNING THIS GROUP OFF
+    const idsToTurnOff = selectedIds
+      // only those that were turned on by group toggling (not manual)
+      .filter(id => (intercomToggleStates[id]?.toggled ?? false) && !(intercomToggleStates[id]?.activated ?? false))
+      // keep overlaps ON if other group still ON
+      .filter(id => !(otherIsOn && otherIds.has(id)));
 
-    db.sendOutputOffOmni(chosenTemplate, filteredPorts);
+    const matchingPorts: number[] = intercomInfoList
+      .filter(info => idsToTurnOff.includes(info.id))
+      .map(info => info.port);
 
-    for (const port of filteredPorts) {
-      setOutputToggleStates(prev => ({
+    db.sendOutputOffOmni(chosenTemplate, matchingPorts);
+
+    for (const id of idsToTurnOff) {
+      setIntercomToggleStates(prev => ({
         ...prev,
-        [port]: {
-          ...prev[port],
-          toggled: false, // or toggle logic
-
-        }
+        [id]: { ...prev[id], toggled: false }, // DON'T clear activated here
       }));
     }
-  } else {
-    db.sendOutputOnOmni(chosenTemplate, portNumbers);
+} else {
+  // TURNING THIS GROUP ON:
+  // Only send ON for outputs that are currently OFF.
+  const idsToTurnOn = selectedIds.filter(
+    (id) => !(intercomToggleStates[id]?.toggled ?? false)
+  );
 
-    for (const port of portNumbers) {
-      setOutputToggleStates(prev => ({
-        ...prev,
-        [port]: {
-          ...prev[port],
-          toggled: true,
-        }
-      }));
-    }
+  const matchingPorts: number[] = intercomInfoList
+    .filter((info) => idsToTurnOn.includes(info.id))
+    .map((info) => info.port);
+
+  if (matchingPorts.length > 0) {
+    db.sendOutputOnOmni(chosenTemplate, matchingPorts);
   }
+
+  for (const id of idsToTurnOn) {
+    setIntercomToggleStates((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], toggled: true },
+    }));
+  }
+}
 };
 
   
 
 
 
-    const handleToggleUnlatchPressGroup = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
-      setToggle((prev) => !prev);
-      const portNumbers = ports?.map(p => p.port) ?? [];
+const handleToggleUnlatchPressGroup = (
+  setToggle: React.Dispatch<React.SetStateAction<boolean>>,
+  toggle: boolean,
+  chosenTemplate: types.TemplateInfo | undefined,
+  ports: types.IntercomInfo[] | undefined
+) => {
+  setToggle((prev) => !prev);
 
-      db.sendOutputOnOmni(chosenTemplate, portNumbers);
+  const selectedIds = ports?.map((p) => p.id) ?? [];
 
-      for (const port of portNumbers) {
-        setOutputToggleStates(prev => ({
-          ...prev,
-          [port]: {
-            ...prev[port],
-            toggled: true,
-          }
-        }));
-      }
-  
-      
-    };
+  // ✅ only turn on ones that are currently OFF
+  const idsToTurnOn = selectedIds.filter(
+    (id) => !(intercomToggleStates[id]?.toggled ?? false)
+  );
+
+  const matchingPorts: number[] = intercomInfoList
+    .filter((info) => idsToTurnOn.includes(info.id))
+    .map((info) => info.port);
+
+  if (matchingPorts.length > 0) {
+    db.sendOutputOnOmni(chosenTemplate, matchingPorts);
+  }
+
+  for (const id of idsToTurnOn) {
+    setIntercomToggleStates((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        toggled: true,
+      },
+    }));
+  }
+};
 
 
-  const handleToggleUnlatchReleaseGroup = (setToggle: React.Dispatch<React.SetStateAction<boolean>>, toggle: boolean, chosenTemplate: types.TemplateInfo | undefined, ports: types.IntercomInfo[] | undefined) => {
-    setToggle((prev) => !prev);
-    const portNumbers = ports?.map(p => p.port) ?? [];
-    // Filter only ports where toggled === true && activated === false
-    const filteredPorts = portNumbers.filter(port => 
-      outputToggleStates[port]?.toggled && !outputToggleStates[port]?.activated
-    );
+const handleToggleUnlatchReleaseGroup = (
+  setToggle: React.Dispatch<React.SetStateAction<boolean>>,
+  toggle: boolean,
+  chosenTemplate: types.TemplateInfo | undefined,
+  ports: types.IntercomInfo[] | undefined,
+  otherIsOn: boolean,
+  otherPorts: types.IntercomInfo[] | undefined
+) => {
+  setToggle(prev => !prev);
 
-    db.sendOutputOffOmni(chosenTemplate, filteredPorts);
+  const selectedIds = ports?.map(p => p.id) ?? [];
+  const otherIds = new Set((otherPorts ?? []).map(p => p.id));
 
-    for (const port of filteredPorts) {
-      setOutputToggleStates(prev => ({
-        ...prev,
-        [port]: {
-          ...prev[port],
-          toggled: false, // or toggle logic
+  const idsToTurnOff = selectedIds
+    .filter(id => (intercomToggleStates[id]?.toggled ?? false) && !(intercomToggleStates[id]?.activated ?? false))
+    .filter(id => !(otherIsOn && otherIds.has(id)));
 
-        }
-      }));
-    }
-  };
+  const matchingPorts: number[] = intercomInfoList
+    .filter(info => idsToTurnOff.includes(info.id))
+    .map(info => info.port);
+
+  db.sendOutputOffOmni(chosenTemplate, matchingPorts);
+
+  for (const id of idsToTurnOff) {
+    setIntercomToggleStates(prev => ({
+      ...prev,
+      [id]: { ...prev[id], toggled: false },
+    }));
+  }
+};
   
 
   /* userefs */
@@ -269,6 +337,73 @@ const handleToggleLatchGroup = (
   //   onToggle: selektorHandler.handleInfoViewToggle
   //   })
 
+  const clearAllInputs = () => {
+      
+      const inputPorts: number[] = inputInfoList.map(info => info.port);
+
+      inputPorts.forEach(port => {
+        setInputToggleStates(prev => ({
+          ...prev,
+          [port]: false,
+        }));
+        
+        db.sendInputOff(chosenTemplate as types.TemplateInfo, port, false, false);
+      });
+  } 
+
+  const toggleActivatedIntercoms = (activatedIntercoms: types.IntercomInfo[]) => {
+    
+
+    activatedIntercoms.forEach(({ id, port, type }) => {
+      setIntercomToggleStates(prev => {
+        const isOn = prev[id]?.toggled ?? false;
+        
+        const newState = !isOn;
+
+        return {
+          ...prev,
+          [id]: {
+            toggled: newState,
+            activated: newState,
+          },
+        };
+      });
+
+      const isCurrentlyOn = intercomToggleStates[id]?.toggled ?? false;
+      if (type !== 'output'){
+        if (isCurrentlyOn) {
+          db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+        } else {
+          db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+        }
+      }
+      else{
+        if (isCurrentlyOn) {
+          db.sendInputOff(chosenTemplate as types.TemplateInfo, port, true, false);
+        } else {
+          db.sendInputOn(chosenTemplate as types.TemplateInfo, port, true);
+        }
+      }
+    })
+  };
+
+  const toggleActivatedInputs = (activatedInputs: types.InputInfo[]) => {
+    
+
+    activatedInputs.forEach(({ port }) => {
+      setInputToggleStates(prev => ({
+        ...prev,
+        [port]: !prev[port],
+      }));
+    
+      if (inputToggleStates[port]) {
+        db.sendInputOff(chosenTemplate as types.TemplateInfo, port, false, false);
+      } else {
+        db.sendInputOn(chosenTemplate as types.TemplateInfo, port, false);
+      }
+    })
+  };
+
   const handleInputToggle = (port: number) => {
     
     setInputToggleStates(prev => ({
@@ -277,57 +412,76 @@ const handleToggleLatchGroup = (
     }));
   
     if (inputToggleStates[port]) {
-      db.sendInputOff(chosenTemplate as types.TemplateInfo, port);
+      db.sendInputOff(chosenTemplate as types.TemplateInfo, port, false, false);
     } else {
-      db.sendInputOn(chosenTemplate as types.TemplateInfo, port);
+      db.sendInputOn(chosenTemplate as types.TemplateInfo, port, false);
     }
   };
   
-  const handleOutputToggleLatch = (port: number, groupState: boolean) => {
-    setOutputToggleStates(prev => {
-      const isOn = prev[port]?.toggled ?? false;
+  const handleOutputToggleLatch = (id: number, port: number, groupState: boolean, type: string) => {
+    
+    setIntercomToggleStates(prev => {
+      const isOn = prev[id]?.toggled ?? false;
+      
       const newState = !isOn;
 
       return {
         ...prev,
-        [port]: {
+        [id]: {
           toggled: newState,
           activated: newState,
         },
       };
     });
 
-    const isCurrentlyOn = outputToggleStates[port]?.toggled ?? false;
-
-    if (isCurrentlyOn) {
-      db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
-    } else {
-      db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+    const isCurrentlyOn = intercomToggleStates[id]?.toggled ?? false;
+    if (type !== 'output'){
+      if (isCurrentlyOn) {
+        db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+      } else {
+        db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+      }
+    }
+    else{
+      if (isCurrentlyOn) {
+        db.sendInputOff(chosenTemplate as types.TemplateInfo, port, true, false);
+      } else {
+        db.sendInputOn(chosenTemplate as types.TemplateInfo, port, true);
+      }
     }
   };
   
-  const handleOutputToggleUnlatchPress = (port: number) => {
-    setOutputToggleStates(prev => ({
+  const handleOutputToggleUnlatchPress = (id: number, port: number, type:string) => {
+    setIntercomToggleStates(prev => ({
       ...prev,
-      [port]: {
+      [id]: {
         toggled: true,
         activated: true,
       },
     }));
 
-    db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+    if (type !== "output") {
+      db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
+    }
+    else{
+      db.sendInputOn(chosenTemplate as types.TemplateInfo, port, true);
+    }
   };
   
-  const handleOutputToggleUnlatchRelease = (port: number) => {
-    setOutputToggleStates(prev => ({
+  const handleOutputToggleUnlatchRelease = (id: number, port: number, type: string ) => {
+    setIntercomToggleStates(prev => ({
       ...prev,
-      [port]: {
+      [id]: {
         toggled: false,
         activated: false,
       },
     }));
-
-    db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+    if(type !== "output"){
+      db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
+    }
+    else{
+      db.sendInputOff(chosenTemplate as types.TemplateInfo, port, true, false);
+    }
   };
 
 useEffect(() => {
@@ -340,50 +494,22 @@ useEffect(() => {
     if (validInputPorts.has(portNumber)) {
       filteredInputToggles[portNumber] = inputToggleStates[portNumber];
     } else {
-      db.sendInputOff(chosenTemplate as types.TemplateInfo, portNumber);
+      db.sendInputOff(chosenTemplate as types.TemplateInfo, portNumber, true, true);
     }
   }
 
   setInputToggleStates(filteredInputToggles);
 
-  // Clean up INTERCOM (OUTPUT) toggle states (now with toggled + activated)
-  const validIntercomPorts = new Set(intercomInfoList.map(intercom => intercom.port));
-  const filteredIntercomToggles: { [port: number]: { toggled: boolean; activated: boolean } } = {};
 
-  for (const port in outputToggleStates) {
-    const portNumber = Number(port);
-    if (validIntercomPorts.has(portNumber)) {
-      filteredIntercomToggles[portNumber] = outputToggleStates[portNumber];
-    } else {
-      db.sendOutputOff(chosenTemplate as types.TemplateInfo, portNumber);
-    }
-  }
 
-  setOutputToggleStates(filteredIntercomToggles);
+
 }, [inputInfoList, intercomInfoList]);
   
 
-    // 1. Add state to hold your scrollObjectContainer size
-  const [listSize, setListSize] = useState({ width: 0, height: 0 });
 
-  // 2. Handler for onLayout
-  function onListLayout(e: LayoutChangeEvent) {
-    const { width, height } = e.nativeEvent.layout;
-    setListSize({ width, height });
-  }
 
-  const outputInfoArr = containers.InfoViewOuputContainer(intercomInfoList, chosenTemplate as types.TemplateInfo,
-    outputToggleStates, 
-    handleOutputToggleLatch, 
-    handleOutputToggleUnlatchPress, 
-    handleOutputToggleUnlatchRelease,
-  )
 
-  const inputInfoArr = containers.InfoViewInputContainer(inputInfoList, chosenTemplate as types.TemplateInfo,
-    inputToggleStates, 
-    handleInputToggle,
-    listSize.width,
-    listSize.height)
+
   
   const handleToggleMute = () => {
     setIsMuted((prev) => {
@@ -400,6 +526,8 @@ useEffect(() => {
       return next;
     });
   };
+
+
   if (loading){
     return (
       <GestureHandlerRootView>
@@ -414,62 +542,59 @@ useEffect(() => {
     </GestureHandlerRootView>
     )
   }
-  return (
+  if (!isAppActive) {
+      return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+        <View style={{ ...styles.generalStyles.container, alignItems: "center", justifyContent: "center" }}>
+          <Text style={styles.generalStyles.text}>Paused</Text>
+        </View>
+      </SafeAreaView>
+    </GestureHandlerRootView>
+  );
+}
+  if (isTablet) return (
     <GestureHandlerRootView>
+  
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         <View style={styles.generalStyles.container}>
         
-          <View style={styles.inputStyles.container} onLayout={onListLayout}>
-
-
-
-                {inputInfoArr}
-
-
-
+          <View style={{...styles.inputStyles.container}} onLayout={onListLayout}>
+              <containers.InfoViewInputContainer
+                inputInfo={inputInfoList}
+                chosenTemplate={chosenTemplate as types.TemplateInfo}
+                inputToggleStates={inputToggleStates}
+                onToggleInput={handleInputToggle}
+                parentWidth={listSize.width}
+                parentHeight={listSize.height}
+                setInputSliderValue={setInputSliderValue}
+                inputSliderValue={inputSliderValue}
+                isAppActive={isAppActive}
+              />
           </View>
-          
+    
           {generalComponent.getSelectorLineBreak()}
-      
-            <View style={styles.outputStyles.container}>
 
-                  {outputInfoArr}
+            <containers.InfoViewOuputContainer
+              intercomInfo={intercomInfoList}
+              chosenTemplate={chosenTemplate as types.TemplateInfo}
+              outputToggleStates={intercomToggleStates}
+              onToggleLatch={handleOutputToggleLatch}
+              onToggleUnlatchPress={handleOutputToggleUnlatchPress}
+              onToggleUnlatchRelease={handleOutputToggleUnlatchRelease}
+              isAppActive={isAppActive}
+            />
+     
 
-            </View>
 
           {generalComponent.getSelectorLineBreak()}
           
-          <View style={styles.generalStyles.buttonContainer}>
+          <View style={{...styles.generalStyles.buttonContainer}}>
 
-          <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleGroup(groupIsOn)]} 
-                  onPress={() => {
-                    if (chosenTemplate?.groupState) {
-                      handleToggleLatchGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
-                    } 
-                  }}
-                  onPressIn={() => {
-                    if(!chosenTemplate?.groupState){
-                      handleToggleUnlatchPressGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
-                    }
-                  }}
-                  onPressOut={() => {
-                    if(!chosenTemplate?.groupState){
-                      handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
-                    }
-                  }}>
-              <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
-            </Pressable>
-
-            {/* {generalComponent.getButton({
-              title: "+",
-              buttonStyle: styles.generalStyles.zoomBtn,
-              textStyle: styles.generalStyles.text,
-              onPress: () => selektorHandler.zoomInfoViewIn(outputRefArr, inputRefArr)
-            })} */}
-            <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleOmni(omniIsOn)]} 
+          <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleOmni(omniIsOn)]} 
                   onPress={() => {
                     if (chosenTemplate?.omniState) {
-                      handleToggleLatchGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                      handleToggleLatchGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
                     } 
                   }}
                   onPressIn={() => {
@@ -479,21 +604,57 @@ useEffect(() => {
                   }}
                   onPressOut={() => {
                     if(!chosenTemplate?.omniState){
-                      handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                      handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
+                    }
+                  }}>
+              <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
+          </Pressable>
+
+          <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleGroup(groupIsOn)]} 
+                  onPress={() => {
+                    if (chosenTemplate?.groupState) {
+                      handleToggleLatchGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
+                    } 
+                  }}
+                  onPressIn={() => {
+                    if(!chosenTemplate?.groupState){
+                      handleToggleUnlatchPressGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
+                    }
+                  }}
+                  onPressOut={() => {
+                    if(!chosenTemplate?.groupState){
+                      handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
                     }
                   }}>
               <Text style={styles.generalStyles.text}>{chosenTemplate?.omniName}</Text>
             </Pressable>
 
+            {/* {generalComponent.getButton({
+              title: "+",
+              buttonStyle: styles.generalStyles.zoomBtn,
+              textStyle: styles.generalStyles.text,
+              onPress: () => selektorHandler.zoomInfoViewIn(outputRefArr, inputRefArr)
+            })} */}
+
             <View style={styles.generalStyles.timecode}>
               <Text style={styles.generalStyles.text}>{chosenTemplate?.name || 'Name Unknown'}</Text>
-              <Text style={styles.generalStyles.text}>{timecodeRef.current}</Text>
+              <Text style={{...styles.generalStyles.text, width: "100%"}}>{timecodeRef.current}</Text>
             </View>
 
             <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleInput(isMuted)]} 
                   onPress={handleToggleMute}>
               <Text style={styles.generalStyles.text}>Listen</Text>
+              <Text style={{...styles.generalStyles.text}}>{(inputSliderValue * 100).toFixed(0)}%</Text>
             </Pressable>
+
+            <Pressable style={({ pressed }) => [
+                  styles.generalStyles.button,
+                  pressed && styles.generalStyles.buttonPressed,]}
+                  onPress={clearAllInputs}>
+              <Text style={styles.generalStyles.text}>Clear all</Text>
+            </Pressable>
+
+            
                   
 {/* 
             {generalComponent.getButton({
@@ -515,6 +676,166 @@ useEffect(() => {
       </SafeAreaView>
     </GestureHandlerRootView>
   )
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+        {/* Horizontal pager */}
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          {Array.from({ length: totalPages }).map((_, pageIdx) => {
+            // Page 0 = inputs page (unchanged)
+            if (pageIdx === 0) {
+              return (
+                <View key="page-inputs" style={{ width: screenWidth, flex: 1 }}>
+                  <View style={styles.generalStyles.container}>
+                    <View style={{ ...styles.inputStyles.container }} onLayout={onListLayout}>
+                      <containers.InfoViewInputContainer
+                        inputInfo={inputInfoList}
+                        chosenTemplate={chosenTemplate as types.TemplateInfo}
+                        inputToggleStates={inputToggleStates}
+                        onToggleInput={handleInputToggle}
+                        parentWidth={listSize.width}
+                        parentHeight={listSize.height}
+                        setInputSliderValue={setInputSliderValue}
+                        inputSliderValue={inputSliderValue}
+                        isAppActive={isAppActive}
+                      />
+                    </View>
+
+                    {generalComponent.getSelectorLineBreak()}
+
+                    <View style={{ ...styles.generalStyles.buttonContainer }}>
+                      <Pressable
+                        style={[
+                          styles.generalStyles.button,
+                          styles.getInfoViewPressableStyleInput(isMuted),
+                          { height: "70%", maxWidth: "30%", alignContent: "center" },
+                        ]}
+                        onPress={handleToggleMute}
+                      >
+                        <Text style={styles.generalStyles.text}>Listen</Text>
+                        <Text style={{ ...styles.generalStyles.text }}>
+                          {(inputSliderValue * 100).toFixed(0)}%
+                        </Text>
+                      </Pressable>
+
+                      <View style={{ ...styles.generalStyles.timecode, height: "70%", maxWidth: "30%" }}>
+                        <Text style={styles.generalStyles.text}>
+                          {chosenTemplate?.name || "Name Unknown"}
+                        </Text>
+                        <Text style={{ ...styles.generalStyles.text, width: "100%" }}>
+                          {timecodeRef.current}
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.generalStyles.button,
+                          pressed && styles.generalStyles.buttonPressed,
+                          { height: "70%", maxWidth: "30%", alignContent: "center" },
+                        ]}
+                        onPress={clearAllInputs}
+                      >
+                        <Text style={styles.generalStyles.text}>Clear all</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              );
+            }
+
+            // Pages 1..N = outputs pages, each shows 16 tiles
+            const outputPageIndex = pageIdx - 1;
+
+            return (
+              <View
+                key={`page-outputs-${outputPageIndex}`}
+                style={{ width: screenWidth }}
+              >
+                <View style={styles.generalStyles.container}>
+                  <View style={{ ...styles.inputStyles.container }}>
+                    <containers.InfoViewOuputContainer
+                      intercomInfo={intercomInfoList}
+                      chosenTemplate={chosenTemplate as types.TemplateInfo}
+                      outputToggleStates={intercomToggleStates}
+                      onToggleLatch={handleOutputToggleLatch}
+                      onToggleUnlatchPress={handleOutputToggleUnlatchPress}
+                      onToggleUnlatchRelease={handleOutputToggleUnlatchRelease}
+                      isAppActive={isAppActive}
+                      pageIndex={outputPageIndex}
+                      pageSize={PAGE_SIZE_PHONE}
+                    />
+                  </View>
+
+                  {generalComponent.getSelectorLineBreak()}
+
+                  <View style={{ ...styles.generalStyles.buttonContainer }}>
+                    <Pressable
+                      style={[
+                        styles.generalStyles.button,
+                        styles.getInfoViewPressableStyleOmni(omniIsOn),
+                        { height: "70%", maxWidth: "30%", alignContent: "center" },
+                      ]}
+                      onPress={() => {
+                        if (chosenTemplate?.omniState) {
+                          handleToggleLatchGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
+                        }
+                      }}
+                      onPressIn={() => {
+                        if (!chosenTemplate?.omniState) {
+                          handleToggleUnlatchPressGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList);
+                        }
+                      }}
+                      onPressOut={() => {
+                        if (!chosenTemplate?.omniState) {
+                          handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
+                        }
+                      }}
+                    >
+                      <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[
+                        styles.generalStyles.button,
+                        styles.getInfoViewPressableStyleGroup(groupIsOn),
+                        { height: "70%", maxWidth: "30%" },
+                      ]}
+                      onPress={() => {
+                        if (chosenTemplate?.groupState) {
+                          handleToggleLatchGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
+                        }
+                      }}
+                      onPressIn={() => {
+                        if (!chosenTemplate?.groupState) {
+                          handleToggleUnlatchPressGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList);
+                        }
+                      }}
+                      onPressOut={() => {
+                        if (!chosenTemplate?.groupState) {
+                          handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
+                        }
+                      }}
+                    >
+                      <Text style={styles.generalStyles.text}>{chosenTemplate?.omniName}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
+  );
 }
+
 
 export default selektor

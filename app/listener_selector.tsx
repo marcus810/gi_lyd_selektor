@@ -12,7 +12,7 @@ import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter } from 'expo-router'
 import React, { useState, useEffect } from 'react'
-
+import * as Device from 'expo-device';
 
 
 
@@ -32,8 +32,15 @@ const ListenerSelector = () => {
 
   // Toggle state: false → not listening (button says "Listen"), true → listening (button says "Mute")
   const [isListening, setIsListening] = useState(!db.isMuted);
+  const [isTablet, setIsTablet] = useState(false);
 
   useEffect(() => {
+    const fetchDeviceType = async () => {
+      const type = await Device.getDeviceTypeAsync();
+      setIsTablet(type === Device.DeviceType.TABLET);
+    };
+
+    fetchDeviceType();
     
     const fetchData = async () => {
       try {
@@ -46,11 +53,12 @@ const ListenerSelector = () => {
           label: t.name,
           value: t.id,
         }));
-        setItems(ddItems);
+        const programItem = { label: "PGM", value: -1 };
+        setItems([programItem, ...ddItems]);
 
         // Optionally default-select the first one
         if (ddItems.length > 0) {
-          setValue(ddItems[0].value);
+          setValue(-1);
           console.log(
             `Default template selected on load: ID=${ddItems[0].value}, name=${ddItems[0].label}`
           );
@@ -97,7 +105,26 @@ const ListenerSelector = () => {
       console.log(`Template picked: ID=${chosenTemplate.id}, name=${chosenTemplate.name}`);
       setCurrentTemplate(chosenTemplate)
       await db.listenerJoin(chosenTemplate)
-    } else {
+    } 
+    else if (selectedId === -1){
+      const fakeTemplate = { id: -1,
+        name: "",
+        noDelayPort: 0,
+        delayPort: 0,
+        micPort: 0,
+        intercomOutputPort: 0,
+        intercomInfo: [],
+        delay: 0,
+        omniState: false,
+        omniName: "",
+        groupState: false,
+        groupName: "",
+        deviceUuid:"",
+        deviceExpiryDate: "" }
+        setCurrentTemplate(fakeTemplate)
+        await db.listenerJoin(fakeTemplate)
+    }
+    else {
       console.log(`Template picked: ID=${selectedId}`);
     }
 
@@ -136,15 +163,13 @@ const ListenerSelector = () => {
             <View style={{ flex: 0.5, justifyContent: 'flex-start' }}>
               {generalComponent.getButton({
                 title: 'Go Back',
+                pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
                 onPress: () => goToIndexScreen(),
               })}
             </View>
             <View style={{ flex: 5, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={styles.templateSelectorStyles.title}>
-                Choose a template to listen to
-              </Text>
             </View>
           </View>
 
@@ -160,7 +185,7 @@ const ListenerSelector = () => {
             <Text
               style={[
                 styles.generalStyles.text,
-                { marginBottom: 12, fontSize: 50, textAlign: 'center' },
+                { marginBottom: 12, textAlign: 'center'}, !isTablet ? { fontSize:  30} : { fontSize:  50},
               ]}
             >
               Select Template:
@@ -194,18 +219,18 @@ const ListenerSelector = () => {
                   backgroundColor: '#fff',
                   width: '100%',
                 }}
-                labelStyle={{
-                  textAlign: 'center',
-                  fontSize: 30,
-                }}
-                placeholderStyle={{
-                  textAlign: 'center',
-                  fontSize: 30,
-                }}
-                textStyle={{
-                  textAlign: 'center',
-                  fontSize: 30,
-                }}
+                labelStyle={[
+                  {textAlign: 'center',
+                  }, !isTablet ? { fontSize:  20} : { fontSize:  30}
+                ]}
+                placeholderStyle={[
+                  {textAlign: 'center',
+                  }, !isTablet ? { fontSize:  20} : { fontSize:  30}
+                ]}
+                textStyle={[styles.generalStyles.text,
+                  {textAlign: 'center',
+                  color: "black"}, !isTablet ? { fontSize:  20} : { fontSize:  30}
+                ]}
               />
             </View>
 
@@ -213,13 +238,14 @@ const ListenerSelector = () => {
             <View style={{ marginTop: 20 }}>
               {generalComponent.getButton({
                 title: isListening ? 'Mute' : 'Listen',
+                pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
                 buttonStyle: {
                   paddingHorizontal: 20,
                   paddingVertical: 12,
                   borderRadius: 8,
                   backgroundColor: '#007AFF',
                 },
-                textStyle: {
+                textStyle: {...styles.generalStyles.text,
                   color: '#fff',
                   fontSize: 16,
                 },

@@ -4,8 +4,8 @@ import * as types from './types'
 /* all components needs to be capitalised because they are custom react-native components 
 (not just for cleancode reasons, if it is uncapitalised it will throw an error)*/ 
 
-  /*  */
-  const Button =({ 
+  /*  */  
+  export function Button({ 
     title, 
     buttonStyle, 
     textStyle, 
@@ -14,9 +14,10 @@ import * as types from './types'
     onPress,
     isDisabled = false
     }: 
-    types.ButtonProps) =>{
+    types.ButtonProps){
       const defaultButtonBgColor = pDefaultButtonBgColor || 'rgba(0,0,0,0.5)'
       const pressedButtonBgColor = pPressedButtonBgColor || 'rgba(0,0,0,0.2)'
+      
       const [buttonBgColor, setButtonBgColor] = useState(defaultButtonBgColor);
       return(
         <Pressable 

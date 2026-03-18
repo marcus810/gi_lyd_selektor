@@ -1,89 +1,261 @@
-import { View, Text, Image, Pressable } from 'react-native'
-import { StyleSheet, useWindowDimensions } from "react-native";
-import React, { forwardRef, useRef, useState, useImperativeHandle, useMemo } from 'react'
+import { View, Text, Image, Pressable, Dimensions, StyleSheet, ViewStyle } from 'react-native';
+import React, { useMemo } from 'react'
 import * as types from '../types'
-import * as misc from '../misc'
+import { DatabaseHandler } from '@/scripts/database/database'
 
+const InfoInputView = (({
+  port,
+  imagePath,
+  name,
+  outerViewStyle,
+  imageViewStyle,
+  textViewStyle,
+  imageStyle,
+  textStyle,
+  selectedStyle,
+  isToggled,
+  onToggle,
+  inputAmount,
+  parentWidth,
+  parentHeight,
+  inputInfoList,
+  onLongPress,
+  templateInfo,
+  slaveActivePorts,
+  slaveColors
+}: types.InfoInputViewProps & {
+  isToggled: boolean
+  onToggle: (port: number) => void
+  inputInfoList: types.InputInfo[]
+  onLongPress: () => void
+  slaveActivePorts?: number[][]
+  slaveColors?: (string | null)[]
+}) => {
+  const imageSource = { uri: imagePath }
 
+  const win = Dimensions.get('window')
+  const CW = (parentWidth && parentWidth > 0) ? parentWidth : win.width
+  const CH = (parentHeight && parentHeight > 0) ? parentHeight : win.height
 
-/* all components needs to be capitalised because they are custom react-native components 
-(not just for cleancode reasons, if it is uncapitalised it will throw an error)*/ 
+  const horizontalGutter = 0
 
-  /* Components */
-  const InfoInputView = (({
-    port, 
-    imagePath, 
-    name, 
-    outerViewStyle,
-    imageViewStyle,
-    textViewStyle,
-    imageStyle,
-    textStyle,
-    selectedStyle,
-    templateInfo,
-    isToggled,
-    onToggle,
-    width,
-    inputAmount,
-    parentWidth,
-    parentHeight
-  }: types.InfoInputViewProps & { isToggled: boolean, onToggle: (port: number) => void }) =>{
-      const [minWidth, setMinWidth] = useState(8)
-      // Extract maxWidth from outerViewStyle
-      const resolvedStyle = StyleSheet.flatten(outerViewStyle)
-      const maxWidth = typeof resolvedStyle?.maxWidth === "number" ? resolvedStyle.maxWidth : 0;
-          
-      const imageSource = { uri: imagePath}
+  // actual number of items
+  const N = Math.max(1, inputAmount || (Array.isArray(inputInfoList) ? inputInfoList.length : 1))
 
-      const CW = parentWidth;
-      const CH = 320
+  // compute single shared tile size + chosen columns (memoized)
+  const { bestW, bestH, bestCols } = useMemo(() => {
+    if (!CW || CW <= 0 || !CH || CH <= 0) return { bestW: 0, bestH: 0, bestCols: 1 }
 
+    // use an effective N that's at least 32 so sizing is computed as if there were 32 items
+    const effectiveN = Math.max(N, 32)
 
-      const ASPECT_RATIO = 2
-      // 1) clamp to MAX_ITEMS  
+    // candidate column counts 1..32 (we cap candidates at 32)
+    const maxCandidates = 32
 
-      const N = inputAmount;
+    let bestArea = -1
+    let bestW = 0
+    let bestH = 0
+    let bestCols = 1
 
-      // 2) find best (r, c)
-      const { bestW, bestH } = useMemo(() => {
-        let maxArea = 0;
-        let bestW = 0;
-        let bestH = 0;
+    for (let c = 1; c <= maxCandidates; c++) {
+      const r = Math.ceil(effectiveN / c)            // NOTE: use effectiveN here
+      const totalGutters = Math.max(0, (c - 1) * horizontalGutter)
+      const wByCols = (CW - totalGutters) / c
+      const hByRows = CH / r
+      // same constraint logic as before
+      const w = Math.min(wByCols, hByRows)
+      const h = Math.min(hByRows, w)
+      const area = w * h
+      if (Number.isFinite(area) && area > bestArea) {
+        bestArea = area
+        bestW = w
+        bestH = h
+        bestCols = c
+      }
+    }
 
-        // Start from 2 columns and increment by 2 to ensure even number of columns
-        for (let c = 1; c <= N; c += 1) {
-          const r = Math.ceil(N / c);
+    if (!Number.isFinite(bestW) || bestW <= 0) return { bestW: 0, bestH: 0, bestCols: 1 }
 
-          // Max width by columns; max width by rows + aspect ratio
-          const wByCols = CW / c;
-          const wByRows = ASPECT_RATIO * (CH / r);
-          const w = Math.min(wByCols, wByRows);
-          const h = w / ASPECT_RATIO;
+    return { bestW: Math.floor(bestW), bestH: Math.floor(bestH), bestCols }
+  }, [CW, CH, N, horizontalGutter]) // keep dependencies minimal and correct
 
-          const area = w * h;
-          if (area > maxArea) {
-            maxArea = area;
-            bestW = w;
-            bestH = h;
-          }
-        }
+  // helper to render 4 faded circles for the "slave" column
+const SlaveColumn = ({
+  slaveActivePortsLocal,
+  slaveColorsLocal
+}: {
+  slaveActivePortsLocal?: number[][]
+  slaveColorsLocal?: (string | null)[]
+}) => {
+  const portsBySlave = Array.isArray(slaveActivePortsLocal)
+    ? slaveActivePortsLocal
+    : [[], [], [], []]
 
-        return { bestW, bestH };
-      }, [N, CW, CH]);
-      return(
-      <Pressable style={[outerViewStyle, {width: bestW, height: bestH, aspectRatio: 1.1}]} onPress={() => onToggle(port)}>
+  const colorsBySlave = Array.isArray(slaveColorsLocal)
+    ? slaveColorsLocal
+    : [null, null, null, null]
+
+  return (
+    <View style={styles.slaveColumn} pointerEvents="none">
+      {[0, 1, 2, 3].map((i) => {
+        const ports =
+          Array.isArray(portsBySlave[i])
+            ? portsBySlave[i].map(Number).filter(n => !Number.isNaN(n))
+            : []
+
+        const isLit = ports.includes(port)
+
+        const baseColor = colorsBySlave[i] ?? 'rgba(180,180,180,1)'
+        const alpha = isLit ? 0.95 : 0.28
+
+        // convert rgba(x,x,x,1) → rgba(x,x,x,ALPHA)
+        const color = baseColor.replace(/rgba\(([^)]+),\s*1\)/, `rgba($1,${alpha})`)
+
+        const extraStyle = isLit
+          ? { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 2, elevation: 3 }
+          : {}
+
+        return (
+          <View
+            key={i}
+            style={[
+              styles.slaveCircle,
+              { backgroundColor: color },
+              extraStyle
+            ]}
+          />
+        )
+      })}
+    </View>
+  )
+}
+
+  if (bestW === 0 || bestH === 0) {
+    return (
+      <Pressable style={[outerViewStyle]} onPress={() => onToggle(port)} onLongPress={onLongPress} delayLongPress={300}>
         <View style={[imageViewStyle, selectedStyle(isToggled)]}>
-          <Image source={imageSource} style={imageStyle}>
-          </Image>
+          <Image source={imageSource} style={imageStyle} />
         </View>
-
         <View style={[textViewStyle, selectedStyle(isToggled)]}>
           <Text style={textStyle}>{name}</Text>
         </View>
+        {templateInfo && templateInfo.isMaster ? (
+          <SlaveColumn
+            slaveActivePortsLocal={slaveActivePorts}
+            slaveColorsLocal={slaveColors}
+          />
+        ) : null}
       </Pressable>
-      )
-    })
+    )
+  }
+
+  // compute index of this item in the provided list (real index among actual N items)
+  const index = (() => {
+    if (!Array.isArray(inputInfoList) || inputInfoList.length === 0) return 0
+    const idx = inputInfoList.findIndex(it => it.port === port)
+    return idx >= 0 ? idx : 0
+  })()
+
+  // cols is chosen based on effectiveN but we use it for actual layout too
+  const cols = Math.max(1, bestCols)
+  const rowsCount = Math.ceil(N / cols) // rows for actual N
+  const rowIndex = Math.floor(index / cols)
+  const positionInRow = index % cols
+  const itemsInThisRow = (rowIndex === rowsCount - 1) ? (N - (rowsCount - 1) * cols) : cols
+
+  // grid widths (we center using the width the grid *would* take with `cols` columns)
+  const usedFullWidth = cols * bestW + Math.max(0, (cols - 1) * horizontalGutter)
+  const usedThisRowWidth = itemsInThisRow * bestW + Math.max(0, (itemsInThisRow - 1) * horizontalGutter)
+
+  const paddingSide = Math.max(0, Math.floor((CW - usedFullWidth) / 2))
+  const halfGutter = horizontalGutter / 2
+
+  const marginLeft = (positionInRow === 0) ? paddingSide + halfGutter : halfGutter
+  const marginRight = halfGutter
+
+  const tileStyle: ViewStyle = {
+    width: bestW,
+    height: bestH,
+    marginLeft,
+    marginRight,
+    marginBottom: horizontalGutter,
+    // ensure the tile is a row so we can put the slave column to the right
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start'
+  }
+
+  return (
+    <Pressable
+      style={[outerViewStyle, tileStyle]}
+      onPress={() => onToggle(port)}
+      onLongPress={onLongPress}
+      delayLongPress={300}
+    >
+      {templateInfo && templateInfo.isMaster ? (
+        <SlaveColumn
+          slaveActivePortsLocal={slaveActivePorts}
+          slaveColorsLocal={slaveColors}
+        />
+      ) : null}
+
+
+      <View style={{ flex: 1, flexDirection: 'column' }}>
+        <View style={[imageViewStyle, selectedStyle(isToggled)]}>
+          <Image source={imageSource} style={imageStyle} />
+        </View>
+
+        <View style={[textViewStyle, selectedStyle(isToggled)]}>
+          <Text style={textStyle} numberOfLines={1}>{name}</Text>
+        </View>
+      </View>
+    </Pressable>
+  )
+})
 
 export default InfoInputView
 
-  
+const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '40%',
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    marginBottom: 10,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+    marginBottom: 20,
+  },
+
+  // slave column styles
+  slaveColumn: {
+    width: 15,
+    // keep circles vertically stacked and centered in tile
+    height: '80%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    marginRight: 4,
+  },
+  slaveCircle: {
+    width: 10,
+    height: 10,
+    borderRadius: 12,
+    marginVertical: 4,
+    // default faded look — backgroundColor provided inline
+    opacity: 1,
+  }
+});

@@ -1,16 +1,20 @@
 {
   "expo": {
-    "name": "Pro Selektor",
+    "name": "Pro Selector",
     "slug": "gi_lyd_selektor",
     "scheme": "pro-selektor",
-    "version": "1.0.0",
+    "version": "2.5.0",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "orientation": "landscape",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "UIUserInterfaceStyle": "Dark",
+        "UIBackgroundModes": [
+          "audio",
+          "voip"
+        ],
         "NSBonjourServices": [
           "_ssh._tcp",
           "_http._tcp"
@@ -23,21 +27,23 @@
       "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor"
     },
     "android": {
+      "versionCode": 10,
       "permissions": [
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
         "CHANGE_WIFI_MULTICAST_STATE",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "ACCESS_FINE_LOCATION"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.cringemaster4k.gi_lyd_selektor"
+      "package": "com.GiLyd.gi_lyd_selektor"
     },
-    "plugins": [
+"plugins": [
       "expo-router",
       [
         "expo-splash-screen",
@@ -46,6 +52,17 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0",
+            "buildArchs": ["arm64-v8a"]
+          }
         }
       ]
     ],

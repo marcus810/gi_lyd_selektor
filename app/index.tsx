@@ -1,15 +1,14 @@
 
-import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform} from 'react-native'
-
+import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform, Image, Modal, } from 'react-native'
+import Slider from '@react-native-community/slider';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import React, { useState, useEffect } from 'react'
 import { Alert } from 'react-native';  // To show alerts
-import Zeroconf from 'react-native-zeroconf';
 import { DatabaseHandler } from '@/scripts/database/database'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as generalComponent from '../scripts/general_scripts/custom_components'
-
-
+import * as Device from 'expo-device';
+import * as ServiceDiscovery from '@inthepocket/react-native-service-discovery';
 
 
 const index = () => {
@@ -25,7 +24,6 @@ const index = () => {
     // If a UUID is found, return it
     return storedUUID;
   };
-
   const [uuid, setUuid] = useState<string | null>(null);
 
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
@@ -45,63 +43,54 @@ const index = () => {
           // Show after waiting for a while to give reconnection a chance
     };
 
-  const searchForService = (() => {
+const searchForService = () => {
+  setIsButtonDisabled(true);
+  let resolved = false;
 
-    setIsButtonDisabled(true);
-    let resolved = false
+  const sub = ServiceDiscovery.addEventListener('serviceFound', (service) => {
+    // service has: name, addresses[], port, txt, etc. :contentReference[oaicite:3]{index=3}
+    if (service.name === 'gi_lyd_selector') {
+      resolved = true;
+      ServiceDiscovery.stopSearch('http').catch(() => {});
+      sub.remove();
 
-    const zeroconf = new Zeroconf();
-    // Start scanning for the specific service (e.g., '_http._tcp' for HTTP services)
-    zeroconf.on('start', () => {
-      
-        setTimeout(() => {
-          zeroconf.stop();  // Stop scanning
-          zeroconf.removeDeviceListeners();  // Remove device listeners
-          zeroconf.removeAllListeners();  // Remove all event listeners
-          setIsButtonDisabled(false);
-          if (!resolved){
-            handleSocketDisconnect()
-          }
+      const ip = service.addresses?.[0];
+      if (!ip) {
+        setIsButtonDisabled(false);
+        handleSocketDisconnect();
+        return;
+      }
 
-      }, 4000);  // 6000 milliseconds = 6 seconds
-    });
+      const api_url = `http://${ip}:${service.port}`;
+      db.setApiUrl(api_url);
+      db.onSocketDisconnect(handleSocketDisconnect);
+      db.connectSelectorSocket(uuid, false);
+      setIsButtonDisabled(false);
+    }
+  });
 
-    // Event triggered when a service is found (but not fully resolved)
+  ServiceDiscovery.startSearch('http').catch(() => {
+    sub.remove();
+    setIsButtonDisabled(false);
+    handleSocketDisconnect();
+  });
 
-    // Event triggered when a service is resolved (fully discovered)
-    zeroconf.on('resolved', (service) => {
-        
-        if (service.name === 'gi_lyd_selector') {
-            resolved = true
-                    // Stop any previous scans to ensure a clean start
-            zeroconf.stop();  // Stop scanning
-            zeroconf.removeDeviceListeners();  // Remove device listeners
-            zeroconf.removeAllListeners();  // Remove all event listeners
-            const api_url = `http://${service.txt.local_ip}:${service.txt.port}`
-            db.setApiUrl(api_url)
-            db.onSocketDisconnect(handleSocketDisconnect);
-            db.connectSelectorSocket(uuid, false)
-        }
-
-        
-
-    });
-
-    // Event triggered when a service is removed
-
-    // Event triggered when an error occurs
-    zeroconf.on('error', (err) => {
-      zeroconf.stop();  // Stop scanning
-      zeroconf.removeDeviceListeners();  // Remove device listeners
-      zeroconf.removeAllListeners();  // Remove all event listeners
-    });
-
-    // Start scanning for the service (adjust the service type accordingly)
-    zeroconf.scan('http', 'tcp', 'local.');
-
-});
+  setTimeout(() => {
+    ServiceDiscovery.stopSearch('http').catch(() => {});
+    sub.remove();
+    setIsButtonDisabled(false);
+    if (!resolved) handleSocketDisconnect();
+  }, 4000);
+};
+  
+  const [isTablet, setIsTablet] = useState(false);
 
   useEffect(() => {
+    const fetchDeviceType = async () => {
+      const type = await Device.getDeviceTypeAsync();
+      setIsTablet(type === Device.DeviceType.TABLET);
+    };
+    fetchDeviceType()
     StatusBar.setHidden(true);
 
     const fetchData = async () => {
@@ -123,9 +112,14 @@ const index = () => {
    
   return (
     <SafeAreaView style={styles.safeContainer}>
+
     <View style={styles.container}>
+      
       <View style={styles.titleContainer}>
-        <Text style={styles.title}>Pro Selector</Text>
+        <Text   style={[styles.title, !isTablet ? { fontSize:  45} : {fontSize: 90}]}>Pro Selector</Text>
+      </View>
+      <View style={styles.imageContainer}>
+        <Image source={require("../assets/images/gilydlogo.png")} style={styles.image}></Image>
       </View>
       <View style={styles.linkContainer}>
         {/* <Link href="/selektor" style={{ marginHorizontal: "auto" }} asChild> */}
@@ -134,13 +128,14 @@ const index = () => {
             title: "Connect",
             buttonStyle: styles.button,
             textStyle: styles.buttonText,
-            pDefaultButtonBgColor: 'rgba(0,0,150,0.5)',
+            pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
             isDisabled: isButtonDisabled,
             onPress: () => searchForService()
           })}
-        {/* </Link> */}
+        {/* </Link>//supportedOrientations={["landscape", 'landscape-left', 'landscape-right']} */}
       </View>
     </View>
+    
     </SafeAreaView>
   )
 }
@@ -155,15 +150,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: 'rgb(36, 34, 34)',
   },
   titleContainer:{
     flex: 1,
     flexDirection: "column",
     alignSelf: 'center',
+    marginTop:30
+  },
+  imageContainer:{
+    flex:1
   },
   linkContainer:{
-    flex: 1,
+    flex: 2,
     alignSelf: 'center'
   },
   title: {
@@ -186,4 +185,35 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
+  image:{
+        width: "100%",
+        height: "70%",
+        resizeMode: "contain"
+    },
 })
+
+  const localstyles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '40%',
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    marginBottom: 10,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+    marginBottom: 20,
+  },
+});

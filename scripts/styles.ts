@@ -4,7 +4,7 @@ import * as misc from './misc'
 export const templateSelectorStyles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: 'rgb(128,128,128)'
+        backgroundColor: 'rgb(36, 34, 34)'
     },
     linkContainer: {
     flex: 1,
@@ -19,6 +19,7 @@ export const templateSelectorStyles = StyleSheet.create({
         padding:5,
     },
     scrollObjectContainer: {
+     
         width: misc.getLandscapeWidth(),
         flexDirection: "column",
         justifyContent: 'space-evenly',
@@ -27,7 +28,7 @@ export const templateSelectorStyles = StyleSheet.create({
     textContainer:{
         justifyContent: "center",
         flexGrow: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(66, 63, 63, 0.75)',
         borderColor: "black",
         borderWidth: 2,
         borderRadius: 10,
@@ -63,29 +64,26 @@ export const templateSelectorStyles = StyleSheet.create({
 
 export const outputStyles = StyleSheet.create({
     container: {
-        flex: 0.9,
-        flexDirection: "row",
+        flex: 2,
+        flexDirection: "column",
         justifyContent: 'flex-start',
-        flexWrap: 'wrap',
-        overflow: "hidden"
+        display: "flex",
     },
     infoContainer: {
-        height: "50%",
         flexDirection: "row",
-        padding:5,
+        padding: 5,
+        minHeight: 90,
     },
     textContainer:{
         justifyContent: "center",
         flexGrow: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        borderColor: "black",
-        borderWidth: 2,
-        borderRadius: 10,
+        flexDirection: "row",
+        alignItems:"center",
     }
 })
 
 export const getInfoViewPressableStyleInput = (isOn: boolean) => ({
-    backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(0,0,0,0.5)'
+    backgroundColor: isOn ? 'hsla(133, 70.60%, 50.60%, 0.5)' : 'rgba(66, 63, 63, 0.75)'
   });
 
 export const getInfoViewPressableStyleOutput = (isOn: boolean, omniOrGroupState: boolean, colour: string) => ({
@@ -93,7 +91,16 @@ export const getInfoViewPressableStyleOutput = (isOn: boolean, omniOrGroupState:
     ? 'hsla(133, 70.60%, 50.60%, 0.5)'
     : omniOrGroupState
     ? colour
-    : 'rgba(0,0,0,0.5)'
+    : 'rgba(66, 63, 63, 0.75)'
+});
+
+export const getInfoViewPressableStyleIntercomInput = (
+  isOn: boolean,
+  type: string
+) => ({
+  backgroundColor: isOn
+    ? 'hsla(133, 70.60%, 50.60%, 0.5)'
+    : 'rgba(66, 63, 63, 0.75)'
 });
 
 export const getInfoViewPressableStyleOutputOmni = (isOn: boolean, omniState: boolean) => ({
@@ -125,15 +132,15 @@ export const inputStyles = StyleSheet.create({
     container:{
         flex: 5,
         flexDirection: "row",
-        justifyContent: 'space-evenly',
+        justifyContent: 'flex-start',
+        alignContent: 'flex-start',
         flexWrap: "wrap",
         overflow: "hidden"
     },
     infoContainer:{
         flexDirection: "column",
         padding: 5,
-        marginBottom: 5,
-       
+        marginBottom: 0,
     },
     textContainer:{
         borderColor: "black",
@@ -149,6 +156,8 @@ export const inputStyles = StyleSheet.create({
         borderWidth: 2,
     },
 })
+
+
 
 export const generalStyles = StyleSheet.create({
     indexButton: {
@@ -170,8 +179,9 @@ export const generalStyles = StyleSheet.create({
     },
     container: {
         flex: 1,
+        height: "100%",
         flexDirection: "column",
-        backgroundColor: 'rgb(128,128,128)'
+        backgroundColor: 'rgb(36, 34, 34)'
     },  
     image:{
         width: "100%",
@@ -190,11 +200,10 @@ export const generalStyles = StyleSheet.create({
         flexWrap: "wrap",
     },
     buttonContainer: {
-        flex: 0.4,
+        flex: 0.5,
         flexDirection: 'row',
         justifyContent: "space-evenly",
         alignItems: "center",
-        margin: 10
     },
     button:{
         flex: 1,
@@ -205,7 +214,18 @@ export const generalStyles = StyleSheet.create({
         borderColor: "black",
         borderWidth: 2,
         borderRadius: 10,
-        backgroundColor: 'rgba(0, 0, 0, 0.50)'
+        backgroundColor: 'rgba(66, 63, 63, 0.75)'
+    },
+    buttonPressed:{
+        flex: 1,
+        maxWidth: "15%",
+        height: "100%",
+        justifyContent: "center",
+        alignItems: "center",
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+        backgroundColor: 'rgba(97, 93, 93, 0.75)'
     },
     zoomBtn:{
         flex:1,
@@ -227,11 +247,12 @@ export const generalStyles = StyleSheet.create({
         borderColor: "black",
         borderWidth: 2,
         borderRadius: 10,
-        backgroundColor: 'rgba(0, 0, 0, 0.25)'
+        backgroundColor: 'rgba(66, 63, 63, 0.75)'
     },
     text:{
         fontWeight: "bold",
         color: "white",
         textAlign: "center",
+        fontVariant: ["tabular-nums"],
     },
 })
