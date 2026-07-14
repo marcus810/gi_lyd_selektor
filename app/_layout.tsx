@@ -9,6 +9,7 @@ import { Dimensions, Platform } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { useKeepAwake } from "expo-keep-awake";
 
 useEffect(() => {
   if (Platform.OS !== 'android') return;
@@ -32,6 +33,7 @@ function isAndroidTablet() {
 }
 
 export default function RootLayout() {
+  useKeepAwake();
   const colorScheme = useColorScheme();
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),

@@ -16,7 +16,8 @@ type AudioModeModuleType = {
   setPlayback?: () => Promise<void>;
   setPlayAndRecordVoiceChat?: () => Promise<void>;
   deactivate?: () => Promise<void>;
-  // add any extra methods here
+  debugAudioSession?: () => Promise<any>;
+  forceSpeaker?: () => Promise<void>;
 };
 type CallKitModuleType = {
   startCall?: (handle: string) => Promise<string | null>; // returns UUID string (or null)
@@ -66,6 +67,8 @@ export class DatabaseHandler {
     private _callKitActive = false;
     public remoteAudioTrack: RNMediaStreamTrack | null = null;
     public isMuted: boolean = true
+    private _isDisconnected: boolean = false;
+    private readonly _skipLocalMicForAudioTest = false;
 
     
     private _lastOutputLevels: Map<number, number> = new Map();               // port -> 0..1
@@ -111,7 +114,11 @@ export class DatabaseHandler {
 
 
     
-    
+    public isDisconnected(): boolean {
+      const wasDisconnected = this._isDisconnected;
+      this._isDisconnected = false;
+      return wasDisconnected;
+    }
   
     // Public static method to get the instance of the class
     public static getInstance(): DatabaseHandler {
@@ -136,12 +143,16 @@ export class DatabaseHandler {
       console.warn('role listener invocation error', e);
     }
   }
-private hardDisconnect(reason: string = "Socket lost"): void {
+private hardDisconnect(
+  reason: string = "Socket lost",
+  notifyDisconnect: boolean = true
+): void {
   if (this._isHardDisconnecting) return;
   this._isHardDisconnecting = true;
 
   try {
     console.log("[WS] hardDisconnect:", reason);
+    this._isDisconnected = true;
 
     this._metersSubscribed = false;
     this._lastOutputLevels.clear();
@@ -189,8 +200,12 @@ private hardDisconnect(reason: string = "Socket lost"): void {
     console.warn("hardDisconnect error", e);
   } finally {
     const callback = this.onDisconnect;
+
+    // clear it first so it cannot loop
+    this.onDisconnect = null;
     this._isHardDisconnecting = false;
-    if (callback) {
+
+    if (notifyDisconnect && callback) {
       callback();
     }
   }
@@ -379,26 +394,13 @@ public async playRemoteStream() {
   }
 
 
-public addOmniToList (intercomList: IntercomInfo[]): IntercomInfo[] {
-    const intercomOmnis: IntercomInfo[] = []
-    intercomList.forEach(intercom => {
-      if (intercom.omniState){
-        intercomOmnis.push(intercom)
-      }
-    });
-    return intercomOmnis
-  }
+public addGroupToList(intercomList: IntercomInfo[]): IntercomInfo[] {
+  return intercomList.filter(intercom => intercom.groupState);
+}
 
-public addGroupToList (intercomList: IntercomInfo[]): IntercomInfo[] {
-    const intercomGroups: IntercomInfo[] = []
-    intercomList.forEach(intercom => {
-      if (intercom.groupState && !intercom.omniState){
-        intercomGroups.push(intercom)
-      }
-    });
-    return intercomGroups
-  }
-
+public addOmniToList(intercomList: IntercomInfo[]): IntercomInfo[] {
+  return intercomList.filter(intercom => intercom.omniState);
+}
 /**
  * Route the given remote MediaStream’s audio to the speaker and start playback.
  * 
@@ -408,7 +410,7 @@ public addGroupToList (intercomList: IntercomInfo[]): IntercomInfo[] {
 
         
 public closeSocket(): void {
-  this.hardDisconnect("Client closing");
+  this.hardDisconnect("Client closing", false);
 }
 
 
@@ -421,13 +423,14 @@ public async enableMicAndSend(): Promise<void> {
 
 
 
-    if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
-      try {
-        await AudioModeModule.setPlayAndRecordVoiceChat();
-      } catch (e) {
-        console.warn('AudioModeModule.setPlayAndRecordVoiceChat failed', e);
-      }
-    }
+if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
+  try {
+    await AudioModeModule.setPlayAndRecordVoiceChat();
+    console.log("before getUserMedia", await AudioModeModule.debugAudioSession?.());
+  } catch (e) {
+    console.warn('AudioModeModule.setPlayAndRecordVoiceChat failed before getUserMedia', e);
+  }
+}
 
     // 3) Now call getUserMedia
     if (this.localStream) {
@@ -438,6 +441,15 @@ public async enableMicAndSend(): Promise<void> {
 
   try {
     const stream = await mediaDevices.getUserMedia({ audio: true, video: false });
+
+    if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
+      try {
+        await AudioModeModule.setPlayAndRecordVoiceChat();
+        console.log("after getUserMedia", await AudioModeModule.debugAudioSession?.());
+      } catch (e) {
+        console.warn('AudioModeModule.setPlayAndRecordVoiceChat failed after getUserMedia', e);
+      }
+    }
     const tracks = stream.getAudioTracks();
     const track = tracks && tracks.length > 0 ? tracks[0] : null;
     if (!track) {
@@ -579,16 +591,24 @@ async onRoleSelector() {
   await this.enableMicAndSend();
 }
 
-onRoleListener() {
-  // set playback-only
-  if (Platform.OS === 'ios' && AudioModeModule?.setPlayback) {
-    AudioModeModule.setPlayback().catch((e: any) => console.warn('AudioModeModule.setPlayback failed', e));
-  }
-
-  try { InCallManager.stop(); } catch (e) { /* ignore */ }
-
-  // disable mic and renegotiate
+async onRoleListener() {
+  // 1. stop local mic / sender first
   this.disableMicAndStop();
+
+  // 2. stop any call-style helpers
+  try { InCallManager.stop(); } catch (e) {}
+
+  // 3. then force iOS into playback/media mode
+  if (Platform.OS === 'ios' && AudioModeModule?.setPlayback) {
+    try {
+      await AudioModeModule.setPlayback();
+      if (AudioModeModule.debugAudioSession) {
+        console.log("after setPlayback", await AudioModeModule.debugAudioSession());
+      }
+    } catch (e) {
+      console.warn('AudioModeModule.setPlayback failed', e);
+    }
+  }
 }
 
 
@@ -623,7 +643,94 @@ public subscribeToPlayers(cb: (players: PlayerState[]) => void): () => void {
   return () => { this._playersListeners.delete(cb); };
 }
 
+public async saveTemplateHiddenInputs(
+  templateInfo: TemplateInfo,
+  hiddenPorts: number[]
+): Promise<void> {
+  const normalizedPorts = Array.from(
+    new Set(
+      hiddenPorts
+        .map(Number)
+        .filter(port => Number.isFinite(port))
+    )
+  );
 
+  const message = {
+    action: "save_template_hidden_inputs",
+    template: templateInfo,
+    hiddenPorts: normalizedPorts,
+  };
+
+  this.sendMessage(message);
+}
+
+
+public async fetchTemplateHiddenInputs(
+  templateInfo: TemplateInfo
+): Promise<number[]> {
+  return new Promise((resolve, reject) => {
+    if (
+      !this.socket ||
+      this.socket.readyState !== WebSocket.OPEN
+    ) {
+      reject(new Error("WebSocket is not connected"));
+      return;
+    }
+
+    const request = {
+      action: "get_template_hidden_inputs",
+      template: templateInfo,
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const message = JSON.parse(event.data);
+
+        if (
+          message.action !==
+          "get_template_hidden_inputs"
+        ) {
+          return;
+        }
+
+        this.socket?.removeEventListener(
+          "message",
+          handleMessage
+        );
+
+        if (message.error) {
+          reject(new Error(message.error));
+          return;
+        }
+
+        const ports = Array.isArray(message.hiddenPorts)
+          ? message.hiddenPorts
+              .map(Number)
+              .filter((port: number) =>
+                Number.isFinite(port)
+              )
+          : [];
+
+        resolve(ports);
+
+      } catch (error) {
+        this.socket?.removeEventListener(
+          "message",
+          handleMessage
+        );
+
+        reject(error);
+      }
+    };
+
+    this.socket.addEventListener(
+      "message",
+      handleMessage
+    );
+
+    this.socket.send(JSON.stringify(request));
+  });
+}
 
 
 public async connectSelectorSocket(uuid: string | null = null, isReconnect: boolean): Promise<void> {
@@ -633,17 +740,68 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
     }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this._metersSubscribed = false;
-        console.log("[WS] creating socket", {
-          time: Date.now(),
-          state: AppState.currentState,
-          url: `${this.api_url}/ws/player`,
+        this._isDisconnected = false;
+        const socketUrl = `${this.api_url}/ws/player`;
+
+        console.log("[WS_DIAG] connectSelectorSocket called", {
+          time: new Date().toISOString(),
+          isReconnect,
+          incomingUuid: uuid,
+          storedUuid: this.uuid,
+          appState: AppState.currentState,
+          api_url: this.api_url,
+          socketUrl,
+          existingSocket: this.socket
+            ? {
+                readyState: this.socket.readyState,
+                CONNECTING: WebSocket.CONNECTING,
+                OPEN: WebSocket.OPEN,
+                CLOSING: WebSocket.CLOSING,
+                CLOSED: WebSocket.CLOSED,
+              }
+            : null,
         });
-        this.socket = new WebSocket(`${this.api_url}/ws/player`); // adjust!
+
+        try {
+          const parsed = new URL(socketUrl);
+          console.log("[WS_DIAG] parsed socket URL", {
+            href: parsed.href,
+            protocol: parsed.protocol,
+            host: parsed.host,
+            hostname: parsed.hostname,
+            port: parsed.port,
+            pathname: parsed.pathname,
+          });
+        } catch (e) {
+          console.warn("[WS_DIAG] socket URL parse failed", e);
+        }
+
+        try {
+          console.log("[WS_DIAG] creating WebSocket now", {
+            socketUrl,
+            time: Date.now(),
+          });
+
+          this.socket = new WebSocket(socketUrl);
+
+          console.log("[WS_DIAG] WebSocket object created", {
+            readyState: this.socket.readyState,
+            CONNECTING: WebSocket.CONNECTING,
+            OPEN: WebSocket.OPEN,
+            CLOSING: WebSocket.CLOSING,
+            CLOSED: WebSocket.CLOSED,
+          });
+        } catch (e) {
+          console.error("[WS_DIAG] new WebSocket threw synchronously", e);
+          this.hardDisconnect("WebSocket constructor threw");
+          return;
+        }
         const configuration = {
             iceServers: []
           };
 
         this.socket.onopen = async () => {
+            this._isDisconnected = false;
             if (!isReconnect){
                 this.uuidOrNo(this.uuid)
             }
@@ -663,7 +821,16 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
 
         this.socket.onerror = (event) => {
           console.warn("[WS] socket error", event);
-          this.hardDisconnect("WebSocket error");
+        };
+
+        this.socket.onclose = (event) => {
+          console.warn("[WS] socket closed", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
+
+          this.hardDisconnect(`WebSocket closed: ${event.code} ${event.reason}`);
         };
 
         // Handle incoming messages
@@ -716,13 +883,25 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             });
             
             // Handle remote audio
-            this.pc.addEventListener('track', (e: any) => {
+            this.pc.addEventListener('track', async (e: any) => {
               if (e.track) {
                 this.remoteAudioTrack = e.track;
                 console.log("Remote track kind", e.track.kind);
-                console.log(this.remoteAudioTrack)
-  
-                this.playRemoteStream(); // your existing playback logic
+
+                this.playRemoteStream();
+
+                if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
+                  try {
+                    await AudioModeModule.setPlayAndRecordVoiceChat();
+                    await AudioModeModule.forceSpeaker?.();
+                    console.log(
+                      "after remote track audio session:",
+                      await AudioModeModule.debugAudioSession?.()
+                    );
+                  } catch (e) {
+                    console.warn("failed to reassert audio session after remote track", e);
+                  }
+                }
               }
             });
 
@@ -804,6 +983,7 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             } catch (err) {
               console.warn("meters message parsing failed", err);
             }
+
           }
 
             if (msg.action === "player_input") {
@@ -829,11 +1009,16 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
                   if (existing) {
                     existing.active_ports = ports;
                     existing.isSlave = existing.isSlave || isSlave;
+                    existing.slaveColor =
+                      p.slaveColor ??
+                      p.slave_color ??
+                      existing.slaveColor ??
+                      null;
                   } else {
                     this._playersMap.set(id, {
                       id,
                       active_ports: ports,
-                      isSlave: !!(p.isSlave || p.is_slave || p.role === 'slave'),
+                      isSlave: !!(p.isSlave || p.is_slave || p.role === "slave"),
                       slaveColor: p.slaveColor ?? p.slave_color ?? null
                     });
                   }
@@ -848,44 +1033,89 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
 
 
             if (msg.action === "players_snapshot" && Array.isArray(msg.players)) {
-              this._playersMap.clear();
-              msg.players.forEach((p: any) => {
-                const id = Number(p.id);
-                if (!Number.isNaN(id)) {
+              try {
+                const seenIds = new Set<number>();
+
+                msg.players.forEach((p: any) => {
+                  const id = Number(p.id);
+                  if (Number.isNaN(id)) return;
+
+                  seenIds.add(id);
+
                   const ports = Array.isArray(p.active_ports)
                     ? p.active_ports
                         .map((x: any) => Number(x))
                         .filter((x: number) => !Number.isNaN(x))
-                        .map((n: number) => n + 1)   // convert 0-based → 1-based
-                    : (p.active_port != null ? [Number(p.active_port) + 1] : []);
-                    this._playersMap.set(id, {
-                      id,
-                      active_ports: ports,
-                      isSlave: !!(p.isSlave || p.is_slave || p.role === 'slave'),
-                      slaveColor: p.slaveColor ?? p.slave_color ?? null
-                    });
+                        .map((n: number) => n + 1) // server sends 0-based here
+                    : (p.active_port != null
+                        ? [Number(p.active_port) + 1]
+                        : undefined);
+
+                  const existing = this._playersMap.get(id);
+
+                  this._playersMap.set(id, {
+                    id,
+                    active_ports: ports ?? existing?.active_ports ?? [],
+                    isSlave: existing?.isSlave || !!(p.isSlave || p.is_slave || p.role === "slave"),
+                    slaveColor:
+                      p.slaveColor ??
+                      p.slave_color ??
+                      existing?.slaveColor ??
+                      null
+                  });
+                });
+
+                // only remove players that truly disappeared from this authoritative snapshot
+                for (const existingId of Array.from(this._playersMap.keys())) {
+                  if (!seenIds.has(existingId)) {
+                    this._playersMap.delete(existingId);
+                  }
                 }
-              });
-              this._emitPlayersSnapshot();
+
+                this._emitPlayersSnapshot();
+              } catch (err) {
+                console.warn("Failed to process players_snapshot", err);
+              }
             }
 
             if (msg.action === "slave_states" && Array.isArray(msg.slaves)) {
-              this._playersMap.clear();
-              msg.slaves.forEach((s: any) => {
-                const id = Number(s.id);
-                if (!Number.isNaN(id)) {
-                  const ports = Array.isArray(s.active_ports)
-                    ? s.active_ports.map((x: any) => Number(x)).filter((x: number) => !Number.isNaN(x)).map((n: number) => n) // server already uses 1-based
-                    : [];
-                  // store as-is (client expects 1-based), mark isSlave true, include color
-                  this._playersMap.set(id, { id, active_ports: ports, isSlave: true, slaveColor: s.color ?? s.slaveColor ?? s.slave_color ?? null });
-                }
-              });
-              this._emitPlayersSnapshot();
+              try {
+                // IMPORTANT:
+                // Merge into existing state instead of clearing everything.
+                // If a slave snapshot arrives without active_ports, preserve the old ports.
+                msg.slaves.forEach((s: any) => {
+                  const id = Number(s.id);
+                  if (Number.isNaN(id)) return;
+
+                  const existing = this._playersMap.get(id);
+
+                  const parsedPorts = Array.isArray(s.active_ports)
+                    ? s.active_ports
+                        .map((x: any) => Number(x))
+                        .filter((x: number) => !Number.isNaN(x))
+                    : undefined; // undefined means "not supplied", so preserve existing
+
+                  this._playersMap.set(id, {
+                    id,
+                    active_ports: parsedPorts ?? existing?.active_ports ?? [],
+                    isSlave: true,
+                    slaveColor:
+                      s.color ??
+                      s.slaveColor ??
+                      s.slave_color ??
+                      existing?.slaveColor ??
+                      null
+                  });
+                });
+
+                this._emitPlayersSnapshot();
+              } catch (err) {
+                console.warn("Failed to process slave_states", err);
+              }
             }
 
             if (msg.action === "template_released") {
-              this.hardDisconnect("Template released");
+              this.hardDisconnect("Template released", false);
               router.push("/");
             }
             if (msg.action === "live_update") {
@@ -997,7 +1227,10 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
                             lastActivationUtc: template.lastActivationUtc,
                             autoDuck: template.autoDuck,
                             autoDuckGain: template.autoDuckGain,
+                            autoDuckRelease: template.autoDuckRelease,
+                            autoDuckThreshold: template.autoDuckThreshold,
                             isMaster: template.isMaster,
+                            isTabMaster: template.isTabMaster,
                             isSlave: template.isSlave,
                             slaveColor: template.slaveColor
                         };
@@ -1108,15 +1341,127 @@ public async playerJoin(templateInfo: TemplateInfo): Promise<void> {
     });
 }
 // Send Input On
-public async sendInputOn(templateInfo: TemplateInfo, port: number, isIntercom: boolean): Promise<void> {
+public async sendInputOn(templateInfo: TemplateInfo, port: number, isIntercom: boolean, tabId?: number): Promise<void> {
     const msg = {
         action: "input_on",
         template: templateInfo,
         port: port,
         type: "output",
-        isIntercom: isIntercom
+        isIntercom: isIntercom,
+        tabId: tabId
     };
     this.sendMessage(msg);
+}
+
+public async saveTemplateInputOrder(
+  templateInfo: TemplateInfo,
+  inputInfoList: InputInfo[]
+): Promise<void> {
+  const msg = {
+    action: "save_template_input_order",
+    template: templateInfo,
+    orderedPorts: inputInfoList.map(input => input.port),
+  };
+
+  this.sendMessage(msg);
+}
+
+public async saveTemplateInputGroups(
+  templateInfo: TemplateInfo,
+  groups: { group1: number[]; group2: number[] }
+): Promise<void> {
+  const msg = {
+    action: "save_template_input_groups",
+    template: templateInfo,
+    groups,
+  };
+
+  this.sendMessage(msg);
+}
+
+public async fetchTemplateInputGroups(
+  templateInfo: TemplateInfo
+): Promise<{ group1: number[]; group2: number[] }> {
+  return new Promise((resolve, reject) => {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      reject(new Error("WebSocket is not connected"));
+      return;
+    }
+
+    const request = {
+      action: "get_template_input_groups",
+      template: templateInfo,
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = JSON.parse(event.data);
+
+      if (message.action === "get_template_input_groups") {
+        this.socket?.removeEventListener("message", handleMessage);
+
+        if (message.error) {
+          reject(new Error(message.error));
+        } else {
+          resolve({
+            group1: message.groups?.group1 ?? [],
+            group2: message.groups?.group2 ?? [],
+          });
+        }
+      }
+    };
+
+    this.socket.addEventListener("message", handleMessage);
+    this.socket.send(JSON.stringify(request));
+  });
+}
+
+public async saveTemplateInputGroupNames(
+  templateInfo: TemplateInfo,
+  names: { group1: string; group2: string }
+): Promise<void> {
+  const msg = {
+    action: "save_template_input_group_names",
+    template: templateInfo,
+    names,
+  };
+
+  this.sendMessage(msg);
+}
+
+public async fetchTemplateInputGroupNames(
+  templateInfo: TemplateInfo
+): Promise<{ group1: string; group2: string }> {
+  return new Promise((resolve, reject) => {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      reject(new Error("WebSocket is not connected"));
+      return;
+    }
+
+    const request = {
+      action: "get_template_input_group_names",
+      template: templateInfo,
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = JSON.parse(event.data);
+
+      if (message.action === "get_template_input_group_names") {
+        this.socket?.removeEventListener("message", handleMessage);
+
+        if (message.error) {
+          reject(new Error(message.error));
+        } else {
+          resolve({
+            group1: message.names?.group1 ?? "Input Group 1",
+            group2: message.names?.group2 ?? "Input Group 2",
+          });
+        }
+      }
+    };
+
+    this.socket.addEventListener("message", handleMessage);
+    this.socket.send(JSON.stringify(request));
+  });
 }
 
 public async sendOnChangeVolume(port: number, volume: number): Promise<void> {
@@ -1130,14 +1475,15 @@ public async sendOnChangeVolume(port: number, volume: number): Promise<void> {
 }
 
 // Send Input Off
-public async sendInputOff(templateInfo: TemplateInfo, port: number, isIntercom: boolean, isCleanup: boolean): Promise<void> {
+public async sendInputOff(templateInfo: TemplateInfo, port: number, isIntercom: boolean, isCleanup: boolean, tabId?: number): Promise<void> {
     const msg = {
         action: "input_off",
         template: templateInfo,
         port: port,
         type: "output",
         isIntercom: isIntercom,
-        isCleanup: isCleanup
+        isCleanup: isCleanup,
+        tabId: tabId
     };
     this.sendMessage(msg);
 }
@@ -1279,7 +1625,7 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
       };
 
       this.sendMessage(msg);
-      this.hardDisconnect("Listener exit");
+      this.hardDisconnect("Listener exit", false);
     }
 
     public async playerExit(templateInfo: TemplateInfo | undefined): Promise<void> {
@@ -1314,7 +1660,7 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
     //     }
     // };
 
-    public async fetchInputs(): Promise<InputInfo[]> {
+    public async fetchInputs(templateInfo?: TemplateInfo): Promise<InputInfo[]> {
         return new Promise<InputInfo[]>((resolve, reject) => {
             if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
                 reject(new Error('WebSocket is not connected'));
@@ -1323,7 +1669,7 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
     
             const fetchInputsRequest = {
                 action: "get_inputs",
-                template: {} // no template needed for fetching inputs
+                template: templateInfo ?? this.templateInfo ?? {}
             };
     
             // Listen for a one-time response
@@ -1467,7 +1813,9 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
                             autoDuck: template.autoDuck,
                             autoDuckGain: template.autoDuckGain,
                             isMaster: template.isMaster,
-                            isSlave: template.isSlave
+                            isTabMaster: template.isTabMaster,
+                            isSlave: template.isSlave,
+                            slaveColor: template.slaveColor
                         }));
                         resolve(templateInfoList);
                     }

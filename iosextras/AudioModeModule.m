@@ -12,4 +12,17 @@ RCT_EXTERN_METHOD(setPlayAndRecordVoiceChat:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(deactivate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(debugAudioSession:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(forceSpeaker:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+
+
++ (BOOL)requiresMainQueueSetup
+{
+  return NO;
+}
+
 @end

@@ -10,7 +10,14 @@ import * as generalComponent from "../general_scripts/custom_components";
 import Slider from "@react-native-community/slider";
 import { StyleSheet } from "react-native";
 import * as Device from "expo-device";
-
+import {
+  DropProvider,
+  SortableGrid,
+  SortableGridItem,
+  GridOrientation,
+  GridStrategy,
+  SortableGridRenderItemProps,
+} from "react-native-reanimated-dnd";
 /** -------------------- OUTPUT -------------------- */
 
 type OutputProps = {
@@ -298,11 +305,23 @@ type InputProps = {
   chosenTemplate: TemplateInfo;
   inputToggleStates: { [port: number]: boolean };
   onToggleInput: (port: number) => void;
+  isInputGroupingEditMode?: boolean;
+  isInputReorderMode?: boolean;
+  onReorderInputs?: (newInputInfo: InputInfo[]) => void;
+  editingGroupPorts?: number[];
   parentWidth: number;
   parentHeight: number;
-  setInputSliderValue: React.Dispatch<React.SetStateAction<number>>;
-  inputSliderValue: number;
-  isAppActive?: boolean; // optional gate
+  inputVolumes: { [port: number]: number };
+  onInputVolumeChange: (port: number, value: number) => void;
+  onInputVolumeLongPress: (port: number) => void;
+  isAppActive?: boolean;
+  isInputDeleteMode?: boolean;
+  hiddenInputPorts?: number[];
+  onToggleInputHidden?: (port: number) => void;
+};
+
+type DndInputInfo = InputInfo & {
+  id: string;
 };
 
 export const InfoViewInputContainer: React.FC<InputProps> = ({
@@ -310,10 +329,18 @@ export const InfoViewInputContainer: React.FC<InputProps> = ({
   chosenTemplate,
   inputToggleStates,
   onToggleInput,
+  isInputGroupingEditMode = false,
+  isInputReorderMode = false,
+  isInputDeleteMode = false,
+  hiddenInputPorts = [],
+  onToggleInputHidden,
+  onReorderInputs,
+  editingGroupPorts = [],
   parentWidth,
   parentHeight,
-  setInputSliderValue,
-  inputSliderValue,
+  inputVolumes,
+  onInputVolumeChange,
+  onInputVolumeLongPress,
   isAppActive = true,
 }) => {
   const db = DatabaseHandler.getInstance();
@@ -324,16 +351,34 @@ export const InfoViewInputContainer: React.FC<InputProps> = ({
   }
 
   const inputAmount = inputInfo.length;
+  const hiddenInputPortSet = useMemo(
+  () => new Set(hiddenInputPorts),
+  [hiddenInputPorts]
+  );
   const windowWidth = misc.getLandscapeWidth();
 
-  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedVolumePort, setSelectedVolumePort] = useState<number | null>(null);
+  const selectedInput = useMemo(
+    () => inputInfo.find((input) => input.port === selectedVolumePort) ?? null,
+    [inputInfo, selectedVolumePort]
+  );
+  const selectedInputVolume = selectedVolumePort != null
+    ? (inputVolumes[selectedVolumePort] ?? 1)
+    : 1;
+
+  const handleOpenVolumeModal = useCallback((port: number) => {
+    setSelectedVolumePort(port);
+    onInputVolumeLongPress(port);
+  }, [onInputVolumeLongPress]);
 
   const handleVolumeChange = useCallback((value: number) => {
-    setInputSliderValue(value);
-    inputInfo.forEach((input) => {
-      db.sendOnChangeVolume(input.port, value);
-    });
-  }, [db, inputInfo, setInputSliderValue]);
+    if (selectedVolumePort == null) return;
+    onInputVolumeChange(selectedVolumePort, value);
+  }, [onInputVolumeChange, selectedVolumePort]);
+
+  const handleCloseModal = useCallback(() => {
+    setSelectedVolumePort(null);
+  }, []);
 
   const [slavePorts, setSlavePorts] = useState<number[][]>([[], [], [], []]);
   const [slaveColors, setSlaveColors] = useState<(string | null)[]>([null, null, null, null]);
@@ -375,55 +420,224 @@ export const InfoViewInputContainer: React.FC<InputProps> = ({
 
   const visibleCount = Math.min(inputAmount);
 
+  const reorderInputInfo = useMemo<DndInputInfo[]>(
+    () =>
+      inputInfo.map((input) => ({
+        ...input,
+        id: String(input.port),
+      })),
+    [inputInfo]
+  );
+
+  const gridColumns = useMemo(() => {
+    if (!parentWidth || !parentHeight || inputAmount <= 0) return 1;
+
+    const effectiveN = Math.max(inputAmount, 32);
+    let bestCols = 1;
+    let bestArea = -1;
+
+    for (let c = 1; c <= 32; c++) {
+      const rows = Math.ceil(effectiveN / c);
+      const width = parentWidth / c;
+      const height = parentHeight / rows;
+      const size = Math.min(width, height);
+      const area = size * size;
+
+      if (area > bestArea) {
+        bestArea = area;
+        bestCols = c;
+      }
+    }
+
+    return bestCols;
+  }, [parentWidth, parentHeight, inputAmount]);
+
+  const gridItemSize = useMemo(() => {
+    if (!parentWidth || !parentHeight) return 80;
+
+    const effectiveN = Math.max(inputAmount, 32);
+    const rows = Math.ceil(effectiveN / gridColumns);
+
+    return Math.floor(Math.min(parentWidth / gridColumns, parentHeight / rows));
+  }, [parentWidth, parentHeight, inputAmount, gridColumns]);
+
+const renderInputTile = (input: InputInfo) => {
+  const isDeleted = hiddenInputPortSet.has(input.port);
+
+  return (
+    <InfoInputView
+      port={input.port}
+      imagePath={input.picturePath}
+      name={input.name}
+      outerViewStyle={styles.inputStyles.infoContainer}
+      imageViewStyle={styles.inputStyles.imageContainer}
+      textViewStyle={styles.inputStyles.textContainer}
+      imageStyle={styles.generalStyles.image}
+      textStyle={styles.generalStyles.text}
+      selectedStyle={styles.getInfoViewPressableStyleInput}
+      templateInfo={chosenTemplate}
+      slaveActivePorts={slavePorts}
+      slaveColors={slaveColors}
+      isToggled={!!inputToggleStates[input.port]}
+      isEditingMode={
+        isInputGroupingEditMode ||
+        isInputReorderMode
+      }
+      isEditSelected={
+        editingGroupPorts.includes(input.port)
+      }
+      isDeleted={
+        isInputReorderMode && isDeleted
+      }
+      onToggle={
+        isInputDeleteMode
+          ? () => onToggleInputHidden?.(input.port)
+          : isInputReorderMode
+            ? () => {}
+            : onToggleInput
+      }
+      width={windowWidth}
+      inputAmount={visibleCount}
+      parentWidth={parentWidth}
+      parentHeight={parentHeight}
+      inputInfoList={inputInfo}
+      onLongPress={() => {
+        if (
+          !isInputReorderMode &&
+          !isInputDeleteMode
+        ) {
+          handleOpenVolumeModal(input.port);
+        }
+      }}
+    />
+  );
+};
+
+  const renderSortableInput = useCallback(
+    ({
+      item,
+      id,
+      positions,
+      ...props
+    }: SortableGridRenderItemProps<DndInputInfo>) => (
+      <SortableGridItem
+        key={id}
+        id={id}
+        data={item}
+        positions={positions}
+        {...props}
+        onDrop={(id: string, position: number, allPositions?: any) => {
+          if (!allPositions) return;
+
+          const reordered = Object.entries(allPositions)
+            .sort((a, b) => (a[1] as { index: number }).index - (b[1] as { index: number }).index)
+            .map(([itemId]) => inputInfo.find((input) => String(input.port) === itemId))
+            .filter(Boolean) as InputInfo[];
+
+          onReorderInputs?.(reordered);
+        }}
+      >
+<View
+  style={{
+    width: gridItemSize,
+    height: gridItemSize,
+    backgroundColor: "rgba(255, 0, 0, 0.18)",
+    borderWidth: 2,
+    borderColor: "rgba(255, 0, 0, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+  }}
+>
+  {renderInputTile(item)}
+</View>
+      </SortableGridItem>
+    ),
+    [
+      inputInfo,
+      onReorderInputs,
+      gridItemSize,
+      inputToggleStates,
+      isInputGroupingEditMode,
+      isInputReorderMode,
+      isInputDeleteMode,
+      hiddenInputPorts,
+      onToggleInputHidden,
+      editingGroupPorts,
+      parentWidth,
+      parentHeight,
+      slavePorts,
+      slaveColors,
+    ]
+  );
+
   return (
     <>
-      {inputInfo.map((input, index) => (
-        <InfoInputView
-          key={index}
-          port={input.port}
-          imagePath={input.picturePath}
-          name={input.name}
-          outerViewStyle={styles.inputStyles.infoContainer}
-          imageViewStyle={styles.inputStyles.imageContainer}
-          textViewStyle={styles.inputStyles.textContainer}
-          imageStyle={styles.generalStyles.image}
-          textStyle={styles.generalStyles.text}
-          selectedStyle={styles.getInfoViewPressableStyleInput}
-          templateInfo={chosenTemplate}
-          slaveActivePorts={slavePorts}
-          slaveColors={slaveColors}
-          isToggled={!!inputToggleStates[input.port]}
-          onToggle={onToggleInput}
-          width={windowWidth}
-          inputAmount={visibleCount}
-          parentWidth={parentWidth}
-          parentHeight={parentHeight}
-          inputInfoList={inputInfo}
-          onLongPress={() => setModalVisible(true)}
-        />
-      ))}
+{isInputReorderMode ? (
+  isInputDeleteMode ? (
+    /*
+     * Delete mode uses the ordinary input grid instead of SortableGrid.
+     * This makes pressing toggle deletion instead of beginning a drag.
+     */
+    inputInfo.map(input => (
+      <View key={`delete-${input.port}`}>
+        {renderInputTile(input)}
+      </View>
+    ))
+  ) : (
+    <DropProvider>
+      <SortableGrid
+        data={reorderInputInfo}
+        renderItem={renderSortableInput}
+        dimensions={{
+          columns: gridColumns,
+          itemWidth: gridItemSize,
+          itemHeight: gridItemSize,
+          columnGap: 0,
+          rowGap: 0,
+        }}
+        orientation={GridOrientation.Vertical}
+        strategy={GridStrategy.Insert}
+        scrollEnabled={false}
+        style={{
+          width: "100%",
+          height: "100%",
+        }}
+        contentContainerStyle={{
+          width: "100%",
+          height: "100%",
+        }}
+      />
+    </DropProvider>
+  )
+) : (
+  inputInfo.map(input => (
+    <View key={input.port}>
+      {renderInputTile(input)}
+    </View>
+  ))
+)}
 
       <Modal
         transparent
-        visible={modalVisible}
+        visible={selectedVolumePort !== null}
         animationType="none"
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={handleCloseModal}
         supportedOrientations={["landscape", "landscape-left", "landscape-right"]}
       >
         <View style={localstyles.modalOverlay}>
           <View style={localstyles.modalContent}>
             <Text style={localstyles.modalTitle}>
-              Volume: {(inputSliderValue * 100).toFixed(0)}%
+              {selectedInput ? `${selectedInput.name} Volume: ${(selectedInputVolume * 100).toFixed(0)}%` : "Volume"}
             </Text>
             <Slider
               style={localstyles.slider}
               minimumValue={0}
               maximumValue={2}
-              value={inputSliderValue}
+              value={selectedInputVolume}
               onValueChange={handleVolumeChange}
               step={0.01}
             />
-            <Button title="Close" onPress={() => setModalVisible(false)} />
+            <Button title="Close" onPress={handleCloseModal} />
           </View>
         </View>
       </Modal>

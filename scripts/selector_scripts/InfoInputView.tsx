@@ -14,6 +14,9 @@ const InfoInputView = (({
   textStyle,
   selectedStyle,
   isToggled,
+  isEditingMode,
+  isEditSelected,
+  isDeleted = false,
   onToggle,
   inputAmount,
   parentWidth,
@@ -25,6 +28,9 @@ const InfoInputView = (({
   slaveColors
 }: types.InfoInputViewProps & {
   isToggled: boolean
+  isEditingMode?: boolean
+  isDeleted?: boolean
+  isEditSelected?: boolean
   onToggle: (port: number) => void
   inputInfoList: types.InputInfo[]
   onLongPress: () => void
@@ -80,6 +86,24 @@ const InfoInputView = (({
   }, [CW, CH, N, horizontalGutter]) // keep dependencies minimal and correct
 
   // helper to render 4 faded circles for the "slave" column
+  const resolvedSelectedStyle = () => {
+    if (isEditingMode) {
+      if (isDeleted) {
+        return {
+          backgroundColor: '#d62828',
+        };
+      }
+
+      return {
+        backgroundColor: isEditSelected
+          ? '#2f80ff'
+          : '#6b7280',
+      };
+    }
+
+    return selectedStyle(isToggled);
+  };
+
 const SlaveColumn = ({
   slaveActivePortsLocal,
   slaveColorsLocal
@@ -133,10 +157,10 @@ const SlaveColumn = ({
   if (bestW === 0 || bestH === 0) {
     return (
       <Pressable style={[outerViewStyle]} onPress={() => onToggle(port)} onLongPress={onLongPress} delayLongPress={300}>
-        <View style={[imageViewStyle, selectedStyle(isToggled)]}>
+        <View style={[imageViewStyle, resolvedSelectedStyle()] }>
           <Image source={imageSource} style={imageStyle} />
         </View>
-        <View style={[textViewStyle, selectedStyle(isToggled)]}>
+        <View style={[textViewStyle, resolvedSelectedStyle()] }>
           <Text style={textStyle}>{name}</Text>
         </View>
         {templateInfo && templateInfo.isMaster ? (
@@ -201,11 +225,11 @@ const SlaveColumn = ({
 
 
       <View style={{ flex: 1, flexDirection: 'column' }}>
-        <View style={[imageViewStyle, selectedStyle(isToggled)]}>
+        <View style={[imageViewStyle, resolvedSelectedStyle()] }>
           <Image source={imageSource} style={imageStyle} />
         </View>
 
-        <View style={[textViewStyle, selectedStyle(isToggled)]}>
+        <View style={[textViewStyle, resolvedSelectedStyle()] }>
           <Text style={textStyle} numberOfLines={1}>{name}</Text>
         </View>
       </View>

@@ -216,6 +216,17 @@ export const generalStyles = StyleSheet.create({
         borderRadius: 10,
         backgroundColor: 'rgba(66, 63, 63, 0.75)'
     },
+    tabButtonPressed:{
+        flex: 1,
+        maxWidth: "15%",
+        height: "100%",
+        justifyContent: "center",
+        alignItems: "center",
+        borderColor: "black",
+        borderWidth: 2,
+        borderRadius: 10,
+        backgroundColor: 'hsla(133, 70.60%, 50.60%, 0.5)'
+    },
     buttonPressed:{
         flex: 1,
         maxWidth: "15%",

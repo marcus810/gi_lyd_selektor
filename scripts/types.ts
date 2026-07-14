@@ -10,6 +10,7 @@ export type IntercomInfo = {
   groupState: boolean
   latchState: boolean
   type: string
+  isTabSlave: boolean
 }
 
 export type InputInfo = {
@@ -43,7 +44,10 @@ export type TemplateInfo = {
   lastActivationUtc: string
   autoDuck: boolean
   autoDuckGain: number
+  autoDuckThreshold: number
+  autoDuckRelease: number
   isMaster: boolean
+  isTabMaster: boolean
   isSlave: boolean
   slaveColor: string
 }

@@ -6,7 +6,6 @@
     "version": "2.5.0",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -24,7 +23,13 @@
         "NSMicrophoneUsageDescription": "Your app needs microphone access for audio streaming.",
         "NSCameraUsageDescription": "This app needs camera access"
       },
-      "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor"
+      "bundleIdentifier": "io.cringemaster4k.gi-lyd-selektor",
+      "privacyManifests": {
+        "NSPrivacyTracking": false,
+        "NSPrivacyTrackingDomains": [],
+        "NSPrivacyCollectedDataTypes": [],
+        "NSPrivacyAccessedAPITypes": []
+      }
     },
     "android": {
       "versionCode": 10,
@@ -35,7 +40,8 @@
         "ACCESS_WIFI_STATE",
         "CHANGE_WIFI_MULTICAST_STATE",
         "WAKE_LOCK",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "NEARBY_WIFI_DEVICES"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
@@ -43,7 +49,7 @@
       },
       "package": "com.GiLyd.gi_lyd_selektor"
     },
-"plugins": [
+    "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
@@ -58,13 +64,18 @@
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 35,
-            "targetSdkVersion": 35,
-            "buildToolsVersion": "35.0.0",
-            "buildArchs": ["arm64-v8a"]
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "buildToolsVersion": "36.0.0",
+            "buildArchs": [
+              "arm64-v8a"
+            ]
+            
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

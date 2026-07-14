@@ -23,44 +23,43 @@ const template_selektor = () => {
   const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([]);
   const [isTablet, setIsTablet] = useState(false);
 
-  useEffect(() => {
-      const fetchDeviceType = async () => {
-        const type = await Device.getDeviceTypeAsync();
-        setIsTablet(type === Device.DeviceType.TABLET);
-      };
-  
-      fetchDeviceType();
+useEffect(() => {
+  const fetchData = async () => {
+    try {
+      const type = await Device.getDeviceTypeAsync();
+      const tablet = type === Device.DeviceType.TABLET;
+      setIsTablet(tablet);
 
-    const fetchData = async () => {
-        try {
-            const templates = await db.fetchTemplates();  // Await the promise to get the actual data
-            const unclaimed = templates.filter(t => t.deviceUuid === null);  
-            setTemplateInfoList(unclaimed)  // Set the state with the resolved data
-            
-        } catch (error) {
-        }
-    };
+      const templates = await db.fetchTemplates();
+      const unclaimed = templates.filter(t => t.deviceUuid === null);
 
-    fetchData();  // Call the async function to fetch the data
+      const allowedTemplates = tablet
+        ? unclaimed
+        : unclaimed.filter(t => !t.isTabMaster);
 
-        const goToIndexScreen = () => {
-          
-          router.push('/')
-        };
-      
-        const handleSocketDisconnect = () => {
-      
-            // Handle the case where the socket fails to reconnect after 3 attempts
-            setTimeout(() => {
-                Alert.alert(
-                    "Failed to Reconnect",
-                    "The connection could not be restored. You will be redirected to the main screen.",
-                    [{ text: "OK", onPress: () => goToIndexScreen() }]
-                );
-            }, 500);  // Show after waiting for a while to give reconnection a chance
-        };
-        db.onSocketDisconnect(handleSocketDisconnect);
-  }, []);  // Empty dependency array to run only once when the component mounts
+      setTemplateInfoList(allowedTemplates);
+    } catch (error) {
+    }
+  };
+
+  fetchData();
+
+  const goToIndexScreen = () => {
+    router.push('/');
+  };
+
+  const handleSocketDisconnect = () => {
+    setTimeout(() => {
+      Alert.alert(
+        "Failed to Reconnect",
+        "The connection could not be restored. You will be redirected to the main screen.",
+        [{ text: "OK", onPress: () => goToIndexScreen() }]
+      );
+    }, 500);
+  };
+
+  db.onSocketDisconnect(handleSocketDisconnect);
+}, []);
 
   const goToIndexScreen = () => {
     db.closeSocket()
