@@ -1,0 +1,105 @@
+Android build commands
+======================
+
+Go to the phone app:
+
+cd /Users/marcus/Desktop/gi_lyd_selektor/phone_app/gi_lyd_selektor
+
+
+Before every Google Play AAB upload, increment Android versionCode:
+
+Current value:
+
+node -p "require('./app.json').expo.android.versionCode"
+
+Automatically bump it by 1:
+
+node -e "const fs=require('fs');const p='app.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.expo.android.versionCode+=1;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');console.log('New Android versionCode:',j.expo.android.versionCode)"
+
+Google Play checks versionCode, not the visible version name.
+The visible app version is app.json "version", for example "2.5.0".
+
+
+Signing note for Google Play:
+
+Google Play requires every update to use the same Android upload key as the previous upload.
+If the previous upload was built with EAS, either build with EAS again or use the downloaded EAS keystore locally.
+
+Recommended EAS AAB build:
+
+eas build --platform android --profile production
+
+This uses the production profile in eas.json. That profile builds an AAB and has autoIncrement enabled.
+
+Local AAB signing:
+
+This project has a local signing plugin:
+
+./plugins/withAndroidLocalSigning
+
+It makes the generated Android release build read:
+
+credentials.json
+credentials/android/keystore.jks
+
+Keep credentials.json and the keystore private. They are the upload key for Google Play updates.
+
+
+Prebuild Android:
+
+npx expo prebuild --platform android
+
+
+Confirm the generated Android build uses the new versionCode:
+
+grep versionCode android/app/build.gradle
+
+
+Confirm the generated Android build uses the EAS/local release signing:
+
+grep -n "localEasCredentials\\|signingConfig localEasCredentials" android/app/build.gradle
+
+
+Validate release signing before building:
+
+cd android
+./gradlew :app:validateSigningRelease
+cd ..
+
+
+Check that the custom Android audio files are still there:
+
+ls android/app/src/main/java/com/GiLyd/gi_lyd_selektor/AudioModeModule.kt
+ls android/app/src/main/java/com/GiLyd/gi_lyd_selektor/AudioModePackage.kt
+
+
+Build APK for testing:
+
+cd android
+./gradlew assembleRelease
+
+
+APK output:
+
+/Users/marcus/Desktop/gi_lyd_selektor/phone_app/gi_lyd_selektor/android/app/build/outputs/apk/release/app-release.apk
+
+
+Optional: install APK to a connected Android phone:
+
+adb install -r /Users/marcus/Desktop/gi_lyd_selektor/phone_app/gi_lyd_selektor/android/app/build/outputs/apk/release/app-release.apk
+
+
+Build AAB for Google Play:
+
+cd /Users/marcus/Desktop/gi_lyd_selektor/phone_app/gi_lyd_selektor/android
+./gradlew bundleRelease
+
+
+AAB output:
+
+/Users/marcus/Desktop/gi_lyd_selektor/phone_app/gi_lyd_selektor/android/app/build/outputs/bundle/release/app-release.aab
+
+
+Important notes:
+- Do not use the debug keystore for a real Google Play release.
+- If the old Samsung cannot install the APK, it may need a 32-bit build.
