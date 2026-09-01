@@ -1,6 +1,7 @@
 import { View, Text, Pressable } from 'react-native'
 import React, { useState } from 'react'
 import * as types from './types'
+import { palette } from '../styles'
 /* all components needs to be capitalised because they are custom react-native components 
 (not just for cleancode reasons, if it is uncapitalised it will throw an error)*/ 
 
@@ -15,8 +16,8 @@ import * as types from './types'
     isDisabled = false
     }: 
     types.ButtonProps){
-      const defaultButtonBgColor = pDefaultButtonBgColor || 'rgba(0,0,0,0.5)'
-      const pressedButtonBgColor = pPressedButtonBgColor || 'rgba(0,0,0,0.2)'
+      const defaultButtonBgColor = pDefaultButtonBgColor || palette.control
+      const pressedButtonBgColor = pPressedButtonBgColor || palette.controlPressed
       
       const [buttonBgColor, setButtonBgColor] = useState(defaultButtonBgColor);
       return(
@@ -32,13 +33,13 @@ import * as types from './types'
   /* */
   const LineBreak = () => {
     return(
-      <View style={{ height: 3, backgroundColor: 'black', marginHorizontal: 5 }}/>
+      <View style={{ height: 1, backgroundColor: palette.border, marginHorizontal: 6 }}/>
     )
   }
   
   const VerticalLineBreak = () => {
     return (
-      <View style={{ width: 3 , height: '100%', backgroundColor: 'black', marginHorizontal: 10 }} />
+      <View style={{ width: 1 , height: '100%', backgroundColor: palette.border, marginHorizontal: 10 }} />
     )
   }
 

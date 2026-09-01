@@ -1,11 +1,8 @@
-import { View } from 'react-native'
-import React, { useRef } from 'react'
-import * as styles from '../styles'
+import React from 'react'
 import { TemplateInfo } from '../types';
-import { template } from '@babel/core'
 import { DatabaseHandler } from '@/scripts/database/database'
 import TemplateView from './TemplateView'
-import { Link, router } from 'expo-router'
+import { router } from 'expo-router'
 
 export const TemplateContainer = ( templateInfo: TemplateInfo[], isTablet: boolean ) => {
     const db = DatabaseHandler.getInstance()

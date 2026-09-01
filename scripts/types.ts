@@ -11,6 +11,7 @@ export type IntercomInfo = {
   latchState: boolean
   type: string
   isTabSlave: boolean
+  blinkEnabled?: boolean
 }
 
 export type InputInfo = {
@@ -23,6 +24,14 @@ export type ActivatedInputInfo = {
   id: number
   port: number
   name: string
+  isActive: boolean
+}
+
+export type ActivatedIntercomInfo = {
+  id: number
+  port: number
+  name: string
+  type: string
   isActive: boolean
 }
 
@@ -50,6 +59,31 @@ export type TemplateInfo = {
   isTabMaster: boolean
   isSlave: boolean
   slaveColor: string
+  listenDisabled?: boolean
+}
+
+export type TemplateProfile = {
+  id: number
+  templateId: number
+  name: string
+  specialGroupName1: string
+  specialGroupName2: string
+  allInputsVolume: number
+  listenActive?: boolean
+  createdAt: string
+  updatedAt: string
+  lastUsedAt: string | null
+}
+
+export type TemplateProfilePayload = {
+  profiles: TemplateProfile[]
+  currentProfile: TemplateProfile | null
+  inputVolumes?: { [port: number]: number }
+  intercomVolumes?: { [id: number]: number }
+  activeInputs?: ActivatedInputInfo[]
+  activeIntercoms?: ActivatedIntercomInfo[]
+  allInputsVolume?: number
+  listenActive?: boolean
 }
 
 export type TemplateViewProps = {

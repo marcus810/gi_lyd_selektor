@@ -2,6 +2,7 @@ import { View, Text, Image, Pressable, Dimensions, StyleSheet, ViewStyle } from 
 import React, { useMemo } from 'react'
 import * as types from '../types'
 import { DatabaseHandler } from '@/scripts/database/database'
+import * as appStyles from '../styles'
 
 const InfoInputView = (({
   port,
@@ -241,22 +242,13 @@ export default InfoInputView
 
 const styles = StyleSheet.create({
   modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    ...appStyles.modalStyles.overlay,
   },
   modalContent: {
-    width: '40%',
-    padding: 20,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    alignItems: 'center',
+    ...appStyles.modalStyles.compactContent,
   },
   modalTitle: {
-    marginBottom: 10,
-    fontSize: 16,
-    fontWeight: 'bold',
+    ...appStyles.modalStyles.title,
   },
   slider: {
     width: '100%',

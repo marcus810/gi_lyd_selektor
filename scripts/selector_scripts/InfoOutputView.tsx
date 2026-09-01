@@ -18,6 +18,8 @@ export interface InfoOutputViewProps {
   onToggleLatch: (id: number, port: number, groupState: boolean, type: string) => void;
   onToggleUnlatchPress: (id: number, port: number, type: string) => void;
   onToggleUnlatchRelease: (id: number, port: number, type: string) => void;
+  intercomVolumes: { [id: number]: number };
+  onIntercomVolumeChange: (intercom: types.IntercomInfo, value: number) => void;
   templateInfo?: types.TemplateInfo;
   isTablet: boolean;
 }
@@ -26,7 +28,8 @@ export interface InfoOutputViewProps {
 const SILENCE_THRESHOLD = 0.0001; // adjust if your audio levels use a different scale
 const ALERT_DURATION_MS = 30_000;
 const BLINK_INTERVAL_MS = 500;
-const ALERT_COLOR = "rgba(150, 145, 8, 0.88)"; // yellow-ish alert color
+const ALERT_REFRESH_THROTTLE_MS = 1000;
+const ALERT_COLOR = styles.palette.warning; // yellow-ish alert color
 
 const HELD_CLEAR_MS = 3 * 60 * 1000;
 
@@ -43,6 +46,8 @@ const InfoOutputView: React.FC<InfoOutputViewProps> = ({
   onToggleLatch,
   onToggleUnlatchPress,
   onToggleUnlatchRelease,
+  intercomVolumes,
+  onIntercomVolumeChange,
   templateInfo,
   isTablet
 }) => {
@@ -62,13 +67,13 @@ const InfoOutputView: React.FC<InfoOutputViewProps> = ({
   // refs for timers / cancellation and stable read within handlers
   const alertTimeoutRef = useRef<number | null>(null);
   const blinkIntervalRef = useRef<number | null>(null);
+  const lastAlertRefreshAtRef = useRef(0);
   const isAlertingRef = useRef(false);
 
   const heldClearTimeoutRef = useRef<number | null>(null);
 
-  const DEBUG_LOG_LEVELS = true; // set false to stop logging
-  const [lastLevel, setLastLevel] = useState<number | null>(null);
-  const debugIntervalRef = useRef<number | null>(null);
+  const DEBUG_LOG_LEVELS = false;
+  const alertBlinkEnabled = outputIntercom?.blinkEnabled !== false;
 
     // keep latest inputIntercom.latchState for quick checks
   const latestInputLatchRef = useRef<boolean | undefined>(undefined);
@@ -79,13 +84,13 @@ const inputInBoth = inputInOmni && inputInGroup;
 
 const omniColour =
   (styles.getInfoViewPressableStyleOutputOmni(false, true) as any)?.backgroundColor
-  ?? "rgba(22, 22, 168, 0.54)";
+  ?? styles.palette.cyanBase;
 
 const groupColour =
   (styles.getInfoViewPressableStyleOutputGroup(false, true) as any)?.backgroundColor
-  ?? "rgba(77, 36, 36, 0.54)";
+  ?? styles.palette.magentaBase;
 
-const baseGrey = "rgba(66, 63, 63, 0.75)";
+const baseGrey = styles.palette.controlSoft;
   
 useEffect(() => {
   const computeToggledFor = (ic?: types.IntercomInfo | null) => {
@@ -188,7 +193,15 @@ const clearHeldClearTimeout = () => {
     isHeldAlertRef.current = false;
   }
 
+  useEffect(() => {
+    if (!alertBlinkEnabled) {
+      cancelAlert();
+    }
+  }, [alertBlinkEnabled, outputIntercom?.id]);
+
   function startOrRefreshAlert() {
+    if (!alertBlinkEnabled) return;
+
     // if input is currently active (user is answering), do not start alert
     if (latestInputLatchRef.current) return;
 
@@ -216,26 +229,27 @@ const clearHeldClearTimeout = () => {
       }, BLINK_INTERVAL_MS) as unknown) as number;
     }
 
-    // refresh timeout (30s from last detection) -> when this fires we stop blinking and HOLD on the LEFT
-    if (alertTimeoutRef.current !== null) {
-      clearTimeout(alertTimeoutRef.current);
-      alertTimeoutRef.current = null;
+    // Refresh at most once per second. Continuous audio should not churn JS timers.
+    const now = Date.now();
+    if (
+      alertTimeoutRef.current === null ||
+      now - lastAlertRefreshAtRef.current >= ALERT_REFRESH_THROTTLE_MS
+    ) {
+      lastAlertRefreshAtRef.current = now;
+      if (alertTimeoutRef.current !== null) {
+        clearTimeout(alertTimeoutRef.current);
+        alertTimeoutRef.current = null;
+      }
+      alertTimeoutRef.current = (setTimeout(() => {
+        endBlinkAndHold();
+      }, ALERT_DURATION_MS) as unknown) as number;
     }
-    alertTimeoutRef.current = (setTimeout(() => {
-      endBlinkAndHold();
-    }, ALERT_DURATION_MS) as unknown) as number;
   }
 
 const handleLevel = (level: number | null | undefined) => {
   if (level === undefined || level === null) {
 
     return;
-  }
-
-  setLastLevel(level);
-  const approxDb = level > 0 ? 20 * Math.log10(level) : -120.0;
-  if (DEBUG_LOG_LEVELS) {
-
   }
 
   // treat as SILENT when level is <= threshold (not strict equality)
@@ -254,8 +268,12 @@ const handleLevel = (level: number | null | undefined) => {
 
   // subscribe to audio for this output (listener if available, otherwise poll via getAudioLevel)
   useEffect(() => {
-    if (!outputIntercom) return;
-    const port = outputIntercom.port-1;
+    if (!outputIntercom || !alertBlinkEnabled) {
+      cancelAlert();
+      return;
+    }
+    const rawPort = Number(outputIntercom.port);
+    const port = rawPort > 0 ? rawPort - 1 : rawPort;
     if (DEBUG_LOG_LEVELS) console.log("[audio effect] subscribing to port", port);
 
     let unsubFn: (() => void) | null = null;
@@ -301,17 +319,18 @@ const handleLevel = (level: number | null | undefined) => {
       }
 
       clearHeldClearTimeout();
-      // we intentionally do NOT clear the alertTimeoutRef here so alert can finish its duration
-      // but we DO clear the blink interval to avoid leaks when component unmounts / port changes
+      if (alertTimeoutRef.current !== null) {
+        clearTimeout(alertTimeoutRef.current);
+        alertTimeoutRef.current = null;
+      }
       if (blinkIntervalRef.current !== null) {
         clearInterval(blinkIntervalRef.current);
         blinkIntervalRef.current = null;
       }
-      // do not nuke alertTimeoutRef here to allow the current alert session to continue.
       isAlertingRef.current = false;
     };
   // run only when port changes
-  }, [outputIntercom?.port]);
+  }, [outputIntercom?.port, alertBlinkEnabled]);
   // layout flex ratios
 
 
@@ -333,12 +352,6 @@ useEffect(() => {
       clearTimeout(alertTimeoutRef.current);
       alertTimeoutRef.current = null;
     }
-    // any audio unsub / poll refs you created should also be cleared here
-    if (debugIntervalRef.current !== null) {
-      clearInterval(debugIntervalRef.current);
-      debugIntervalRef.current = null;
-    }
-
     // reset one-shot flag so re-init can run when a valid port returns
     didRunOutputRef.current = null;
   }
@@ -358,6 +371,7 @@ useEffect(() => {
 
   const id = outputIntercom.id;
   const port = outputIntercom.port;
+  if (Number(port) === -1) return;
   // If we've already attempted for this same output id, don't try again
   if (didRunOutputRef.current === id) return;
 
@@ -372,7 +386,7 @@ useEffect(() => {
 
   // only call the toggle if it's not already ON
   if (!currentlyOn) {
-    console.log("[output-init] activating output id=", id, "port=", port);
+    if (DEBUG_LOG_LEVELS) console.log("[output-init] activating output id=", id, "port=", port);
     onToggleLatch(id, port, false, outputIntercom.type);
   } else {
     // If it's already on, nothing to do
@@ -392,9 +406,9 @@ useEffect(() => {
     setModalVisible(true);
   };
 
-  const handleVolumeChange = (port: number, value: number) => {
+  const handleVolumeChange = (intercom: types.IntercomInfo, value: number) => {
     setSliderValue(value);
-    db.sendOnChangeVolume(port, value);
+    onIntercomVolumeChange(intercom, value);
   };
 
   // ----------- helpers -----------
@@ -407,7 +421,7 @@ useEffect(() => {
     fn: ((...a: any[]) => any) | undefined,
     filled: boolean,
     stateFlag: number | boolean,
-    colourDefault = "rgba(66, 63, 63, 0.75)"
+    colourDefault = styles.palette.controlSoft
   ) => {
     if (!fn) return {};
     try {
@@ -436,7 +450,7 @@ useEffect(() => {
         selectedStyleForInput,
         isOnFor(inputIntercom),
         stateFlagFor(inputIntercom),
-        "rgba(0,0,0,0.5)"
+        styles.palette.controlSoft
       )
     : {};
 
@@ -455,21 +469,29 @@ useEffect(() => {
   // Determine combined base color:
   // When the RIGHT (input) is ON, base becomes a lighter gray.
   // Otherwise prefer the input's backgroundColor (if any), else the output's, else default.
-  const defaultBase = "rgba(66, 63, 63, 0.75)";
+  const defaultBase = styles.palette.controlSoft;
   const inputBg = (inputTileStyleRaw && (inputTileStyleRaw as any).backgroundColor) || null;
 
   const inputIsOn = isOnFor(inputIntercom);
   const baseColor = inputIsOn
-    ? "rgba(116, 115, 115, 0.95)" // lighter gray when input active
+    ? "rgba(55, 70, 62, 0.96)" // lighter gray when input active
     : inputBg ?? defaultBase;
 
 
   const displayBaseColor = baseColor;
-  // compute green fill overlay based on sliderValue (0..1)
-  const clamped = Math.max(0, Math.min(1, sliderValue ?? 0));
+  const outputVolume = outputIntercom
+    ? intercomVolumes[outputIntercom.id] ?? 1
+    : 1;
+  const displayedVolume =
+    modalVisible
+      ? sliderValue
+      : outputVolume;
+
+  // compute green fill overlay based on the saved profile volume (0..1)
+  const clamped = Math.max(0, Math.min(1, displayedVolume ?? 0));
   const fillWidth = `${Math.round(clamped * 100)}%`;
   // semi-transparent green
-  const fillColor = `rgba(26, 86, 14)`;;
+  const fillColor = "rgba(41, 205, 111, 0.58)";
 
 
   
@@ -477,6 +499,9 @@ useEffect(() => {
   const rightExists = hasValidPort(inputIntercom);
   const leftFlex = leftExists && rightExists ? 1 : 1;
   const rightFlex = leftExists && rightExists ? 2 : 1;
+  const outputOnlyLabel = leftExists && !rightExists
+    ? inputIntercom?.name || outputIntercom?.name || ""
+    : "";
   const minWidth = 8;
 
   if (!leftExists && !rightExists) {
@@ -487,7 +512,7 @@ useEffect(() => {
   if (isTablet) return (
     <>
       {/* Outer wrapper — we draw the shared background + left→right fill here */}
-      <View style={[outerViewStyle, { borderRadius: 10, flexDirection: "row", padding: 5,  minWidth: misc.getLandscapeWidth() / 8,height: "50%" }]}>
+      <View style={[outerViewStyle, { borderRadius: 8, flexDirection: "row", padding: 4,  minWidth: misc.getLandscapeWidth() / 8,height: "50%" }]}>
         {/* --- inside the tablet branch: container view --- */}
         <View
           style={[
@@ -495,9 +520,9 @@ useEffect(() => {
             {
               // combined container background (shared by both halves)
               backgroundColor: displayBaseColor,
-              borderRadius: 10,
-              borderColor: "black",
-              borderWidth: 2,
+              borderRadius: 8,
+              borderColor: styles.palette.borderStrong,
+              borderWidth: 1,
               position: "relative",
               overflow: "hidden",
               flexDirection: "row",
@@ -508,8 +533,8 @@ useEffect(() => {
           {/* LEFT = OUTPUT */}
           {leftExists && (
             <Pressable
-              style={{ flex: leftFlex, backgroundColor:"rgba(66, 63, 63, 0.75)" }}
-              onLongPress={() => openModalFor("output", sliderValue)}
+              style={{ flex: leftFlex, backgroundColor: styles.palette.controlSoft }}
+              onLongPress={() => openModalFor("output", outputVolume)}
               delayLongPress={300}
               
             >
@@ -518,15 +543,15 @@ useEffect(() => {
                 style={{
                   ...styles.outputStyles.textContainer,
                   position: "relative",
-                  borderTopLeftRadius: 10,
-                  borderBottomLeftRadius: 10,
-                  borderRightWidth: 3,
-                  borderColor: "black",
+                  borderTopLeftRadius: 8,
+                  borderBottomLeftRadius: 8,
+                  borderRightWidth: 1,
+                  borderColor: styles.palette.borderStrong,
 
                 }}
               >
                 {/* left-side blinking alert overlay (fills entire left half only) */}
-                {isAlerting && blinkOn && (
+                {alertBlinkEnabled && isAlerting && blinkOn && (
                   <View
                     pointerEvents="none"
                     style={{
@@ -542,7 +567,7 @@ useEffect(() => {
                 )}
 
                 {/* left-side static hold overlay (after blink timed out) */}
-                {isHeldAlert && (
+                {alertBlinkEnabled && isHeldAlert && (
                   <View
                     pointerEvents="none"
                     style={{
@@ -559,8 +584,16 @@ useEffect(() => {
                 )}
 
                 {/* content above overlays */}
-                <View style={{ zIndex: 1, flex: 3, justifyContent: "center", alignItems: "center", margin: 1, flexDirection: "row" }}>
+                <View style={{ zIndex: 1, flex: 3, justifyContent: "center", alignItems: "center", margin: 1, paddingHorizontal: 4 }}>
                   <Text style={{ ...textStyle, fontSize: 12, textAlign: "center" }}>{Math.round(clamped * 100)}%</Text>
+                  {outputOnlyLabel ? (
+                    <Text
+                      style={{ ...textStyle, color: styles.palette.textMuted, fontSize: 11, textAlign: "center" }}
+                      numberOfLines={1}
+                    >
+                      {outputOnlyLabel}
+                    </Text>
+                  ) : null}
                 </View>
               </View>
             </Pressable>
@@ -603,8 +636,8 @@ useEffect(() => {
                 {
                   position: "relative",
                   backgroundColor: "transparent",
-                  borderTopRightRadius: 10,
-                  borderBottomRightRadius: 10,
+                  borderTopRightRadius: 8,
+                  borderBottomRightRadius: 8,
 
                   // IMPORTANT: clip the split background to rounded corners
                   overflow: "hidden",
@@ -685,8 +718,8 @@ useEffect(() => {
               value={sliderValue}
               onValueChange={(v) => {
                 setSliderValue(v);
-                const port = modalSide === "output" ? outputIntercom?.port : inputIntercom?.port;
-                if (port !== undefined && port !== null) db.sendOnChangeVolume(port, v);
+                const intercom = modalSide === "output" ? outputIntercom : inputIntercom;
+                if (intercom) handleVolumeChange(intercom, v);
               }}
               step={0.01}
             />
@@ -702,16 +735,16 @@ useEffect(() => {
   else return (
         <>
       {/* Outer wrapper — we draw the shared background + left→right fill here */}
-      <View style={[outerViewStyle, { borderRadius: 10 }]}>
+      <View style={[outerViewStyle, { borderRadius: 8 }]}>
         <View
           style={[
             textViewStyle,
             {
               // combined container background (shared by both halves)
               backgroundColor: displayBaseColor,
-              borderRadius: 10,
-              borderColor: "black",
-              borderWidth: 2,
+              borderRadius: 8,
+              borderColor: styles.palette.borderStrong,
+              borderWidth: 1,
               position: "relative",
               overflow: "hidden",
               flexDirection: "row",
@@ -722,21 +755,21 @@ useEffect(() => {
           {/* LEFT = OUTPUT */}
           {leftExists && (
             <Pressable
-              style={{ flex: leftFlex, backgroundColor:"rgba(66, 63, 63, 0.75)" }}
-              onLongPress={() => openModalFor("output", sliderValue)}
+              style={{ flex: leftFlex, backgroundColor: styles.palette.controlSoft }}
+              onLongPress={() => openModalFor("output", outputVolume)}
               delayLongPress={300}
             >
               <View
                 style={{
                   ...styles.outputStyles.textContainer,
                   position: "relative",
-                  borderTopLeftRadius: 10,
-                  borderBottomLeftRadius: 10,
-                  borderRightWidth: 3,
-                  borderColor: "black",
+                  borderTopLeftRadius: 8,
+                  borderBottomLeftRadius: 8,
+                  borderRightWidth: 1,
+                  borderColor: styles.palette.borderStrong,
                 }}
               >
-              {isAlerting && blinkOn && (
+              {alertBlinkEnabled && isAlerting && blinkOn && (
                 <View
                   pointerEvents="none"
                   style={{
@@ -752,7 +785,7 @@ useEffect(() => {
               )}
 
               {/* left-side static hold overlay (after blink timed out) */}
-              {isHeldAlert && (
+              {alertBlinkEnabled && isHeldAlert && (
                 <View
                   pointerEvents="none"
                   style={{
@@ -768,8 +801,16 @@ useEffect(() => {
                 />
               )}
 
-                <View style={{ zIndex: 1, flex: 3, justifyContent: "center", alignItems: "center", margin: 1, flexDirection: "row" }}>
+                <View style={{ zIndex: 1, flex: 3, justifyContent: "center", alignItems: "center", margin: 1, paddingHorizontal: 3 }}>
                   <Text style={{ ...textStyle, fontSize: 10, textAlign: "center" }}>{Math.round(clamped * 100)}%</Text>
+                  {outputOnlyLabel ? (
+                    <Text
+                      style={{ ...textStyle, color: styles.palette.textMuted, fontSize: 9, textAlign: "center" }}
+                      numberOfLines={1}
+                    >
+                      {outputOnlyLabel}
+                    </Text>
+                  ) : null}
                 </View>
               </View>
             </Pressable>
@@ -813,8 +854,8 @@ useEffect(() => {
                 {
                   position: "relative",
                   backgroundColor: "transparent",
-                  borderTopRightRadius: 10,
-                  borderBottomRightRadius: 10,
+                  borderTopRightRadius: 8,
+                  borderBottomRightRadius: 8,
 
                   // IMPORTANT: clip the split background to rounded corners
                   overflow: "hidden",
@@ -894,8 +935,8 @@ useEffect(() => {
               value={sliderValue}
               onValueChange={(v) => {
                 setSliderValue(v);
-                const port = modalSide === "output" ? outputIntercom?.port : inputIntercom?.port;
-                if (port !== undefined && port !== null) db.sendOnChangeVolume(port, v);
+                const intercom = modalSide === "output" ? outputIntercom : inputIntercom;
+                if (intercom) handleVolumeChange(intercom, v);
               }}
               step={0.01}
             />
@@ -912,26 +953,15 @@ export default InfoOutputView;
 
 const localstyles = StyleSheet.create({
   modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
+    ...styles.modalStyles.overlay,
   },
   modalContent: {
-    width: "80%",
-    padding: 20,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    alignItems: "center",
+    ...styles.modalStyles.content,
   },
   modalTitle: {
-    marginBottom: 10,
-    fontSize: 16,
-    fontWeight: "bold",
+    ...styles.modalStyles.title,
   },
   slider: {
-    width: "100%",
-    height: 40,
-    marginBottom: 20,
+    ...styles.modalStyles.slider,
   },
 });

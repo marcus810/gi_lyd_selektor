@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "Pro Selector",
+    "name": "Proselector",
     "slug": "gi_lyd_selektor",
     "scheme": "pro-selektor",
-    "version": "2.5.0",
+    "version": "2.6.3",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -32,7 +32,7 @@
       }
     },
     "android": {
-      "versionCode": 10,
+      "versionCode": 31,
       "permissions": [
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
@@ -51,6 +51,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withAndroidLocalSigning",
       [
         "expo-splash-screen",
         {
@@ -67,10 +68,10 @@
             "compileSdkVersion": 36,
             "targetSdkVersion": 36,
             "buildToolsVersion": "36.0.0",
+            "usesCleartextTraffic": true,
             "buildArchs": [
               "arm64-v8a"
             ]
-            
           }
         }
       ],

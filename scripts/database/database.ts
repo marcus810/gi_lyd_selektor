@@ -1,8 +1,7 @@
-import { TemplateInfo, InputInfo, IntercomInfo } from "../types"; // Adjust the import path if necessary
+import { TemplateInfo, InputInfo, IntercomInfo, TemplateProfilePayload } from "../types"; // Adjust the import path if necessary
 import { router } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
-import InCallManager from 'react-native-incall-manager';
 import { PermissionsAndroid, Platform, NativeModules, AppState } from 'react-native';
 import { startAudioStatsMonitor } from "./statsaudiomonitor";
 
@@ -17,7 +16,6 @@ type AudioModeModuleType = {
   setPlayAndRecordVoiceChat?: () => Promise<void>;
   deactivate?: () => Promise<void>;
   debugAudioSession?: () => Promise<any>;
-  forceSpeaker?: () => Promise<void>;
 };
 type CallKitModuleType = {
   startCall?: (handle: string) => Promise<string | null>; // returns UUID string (or null)
@@ -43,6 +41,29 @@ import { template } from "@babel/core";
 
 
 type Role = 'selector' | 'listener' | 'unknown';
+
+const toBackendBoolean = (value: any): boolean =>
+    value === true ||
+    value === 1 ||
+    value === "1" ||
+    String(value).toLowerCase() === "true";
+
+const SOCKET_HEARTBEAT_INTERVAL_MS = 5_000;
+const SOCKET_WATCHDOG_INTERVAL_MS = 2_500;
+const SOCKET_STALE_AFTER_MS = 15_000;
+const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
+const SOCKET_RECONNECT_DELAYS_MS = [300, 900, 1_800] as const;
+
+const monotonicNow = (): number => {
+  if (
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+  ) {
+    return globalThis.performance.now();
+  }
+
+  return Date.now();
+};
 
 export class DatabaseHandler {
     private static instance: DatabaseHandler;
@@ -88,6 +109,29 @@ export class DatabaseHandler {
     private _playersMap: Map<number, PlayerState> = new Map();
 
     private _playersListeners: Set<(players: PlayerState[]) => void> = new Set();
+    private _latestTimecode = "No timecode";
+    private _latestTimecodeSequence: number | null = null;
+    private _lastLtcReceivedAt = 0;
+    private _lastLtcRenderedSequence: number | null = null;
+    private _lastLtcRenderedAt = 0;
+    private _timecodeListeners: Set<(
+      newTimecode: string,
+      sequence: number | null
+    ) => void> = new Set();
+    private _heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+    private _watchdogInterval: ReturnType<typeof setInterval> | null = null;
+    private _connectTimeout: ReturnType<typeof setTimeout> | null = null;
+    private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private _socketAppStateSubscription: ReturnType<
+      typeof AppState.addEventListener
+    > | null = null;
+    private _lastSocketMessageAt = 0;
+    private _lastPongAt = 0;
+    private _lastLtcLagWarningAt = 0;
+    private _healthWasSuspended = false;
+    private _automaticReconnectAttempts = 0;
+    private _lastJoinedTemplate: TemplateInfo | null = null;
+    private _lastListenerTemplate: TemplateInfo | null = null;
     private _metersCount = 0;
     private _metersLogAt = 0;
 
@@ -128,8 +172,14 @@ export class DatabaseHandler {
       return DatabaseHandler.instance;
     }
     // Register the disconnection handler
-    public onSocketDisconnect(callback: () => void) {
-        this.onDisconnect = callback;
+    public onSocketDisconnect(callback: () => void): () => void {
+      this.onDisconnect = callback;
+
+      return () => {
+        if (this.onDisconnect === callback) {
+          this.onDisconnect = null;
+        }
+      };
     }
 
 
@@ -143,16 +193,204 @@ export class DatabaseHandler {
       console.warn('role listener invocation error', e);
     }
   }
+
+private stopSocketHealthMonitoring(): void {
+  if (this._heartbeatInterval !== null) {
+    clearInterval(this._heartbeatInterval);
+    this._heartbeatInterval = null;
+  }
+  if (this._watchdogInterval !== null) {
+    clearInterval(this._watchdogInterval);
+    this._watchdogInterval = null;
+  }
+  if (this._connectTimeout !== null) {
+    clearTimeout(this._connectTimeout);
+    this._connectTimeout = null;
+  }
+  if (this._socketAppStateSubscription !== null) {
+    this._socketAppStateSubscription.remove();
+    this._socketAppStateSubscription = null;
+  }
+}
+
+private hasAutomaticReconnectTarget(): boolean {
+  if (this.currentRole === "selector") {
+    return this._lastJoinedTemplate !== null;
+  }
+  if (this.currentRole === "listener") {
+    return this._lastListenerTemplate !== null;
+  }
+  return false;
+}
+
+private sendHeartbeat(socket: WebSocket): void {
+  if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+  if (AppState.currentState !== "active") return;
+
+  try {
+    socket.send(JSON.stringify({
+      action: "ping",
+      pingId: monotonicNow(),
+      client: "mobile",
+      lastLtcReceivedSequence: this._latestTimecodeSequence,
+      lastLtcRenderedSequence: this._lastLtcRenderedSequence,
+    }));
+  } catch (error) {
+    console.warn("[WS_HEALTH] heartbeat send failed", error);
+    this.handleSocketFailure("Heartbeat send failed", socket);
+  }
+}
+
+private startSocketHealthMonitoring(socket: WebSocket): void {
+  this.stopSocketHealthMonitoring();
+
+  const now = monotonicNow();
+  this._lastSocketMessageAt = now;
+  this._lastPongAt = now;
+  this._healthWasSuspended = AppState.currentState !== "active";
+
+  this._socketAppStateSubscription = AppState.addEventListener(
+    "change",
+    (nextState) => {
+      if (this.socket !== socket) return;
+
+      if (nextState !== "active") {
+        this._healthWasSuspended = true;
+        return;
+      }
+
+      const resumedAt = monotonicNow();
+      this._healthWasSuspended = false;
+      this._lastSocketMessageAt = resumedAt;
+      this._lastPongAt = resumedAt;
+      this.sendHeartbeat(socket);
+    }
+  );
+
+  this.sendHeartbeat(socket);
+
+  this._heartbeatInterval = setInterval(() => {
+    this.sendHeartbeat(socket);
+  }, SOCKET_HEARTBEAT_INTERVAL_MS);
+
+  this._watchdogInterval = setInterval(() => {
+    if (this.socket !== socket) return;
+
+    if (
+      socket.readyState === WebSocket.CLOSING ||
+      socket.readyState === WebSocket.CLOSED
+    ) {
+      this.handleSocketFailure("Socket stopped before close event", socket);
+      return;
+    }
+
+    if (socket.readyState !== WebSocket.OPEN) return;
+
+    if (AppState.currentState !== "active") {
+      this._healthWasSuspended = true;
+      return;
+    }
+
+    const checkedAt = monotonicNow();
+    if (this._healthWasSuspended) {
+      this._healthWasSuspended = false;
+      this._lastSocketMessageAt = checkedAt;
+      this._lastPongAt = checkedAt;
+      this.sendHeartbeat(socket);
+      return;
+    }
+
+    const lastHealthyAt = Math.max(
+      this._lastSocketMessageAt,
+      this._lastPongAt
+    );
+    if (checkedAt - lastHealthyAt <= SOCKET_STALE_AFTER_MS) return;
+
+    console.warn("[WS_HEALTH] socket stopped delivering messages", {
+      staleForMs: Math.round(checkedAt - lastHealthyAt),
+      lastLtcReceivedSequence: this._latestTimecodeSequence,
+      lastLtcRenderedSequence: this._lastLtcRenderedSequence,
+    });
+    this.handleSocketFailure("Socket heartbeat timed out", socket);
+  }, SOCKET_WATCHDOG_INTERVAL_MS);
+}
+
+private notifyDisconnectFailure(): void {
+  this.stopSocketHealthMonitoring();
+  if (this._reconnectTimer !== null) {
+    clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
+  }
+
+  this._automaticReconnectAttempts = 0;
+  this._isDisconnected = true;
+  const callback = this.onDisconnect;
+  this.onDisconnect = null;
+  if (callback) callback();
+}
+
+private scheduleAutomaticReconnect(reason: string): void {
+  if (this._reconnectTimer !== null) return;
+  if (!this.hasAutomaticReconnectTarget()) {
+    this.notifyDisconnectFailure();
+    return;
+  }
+
+  const attemptIndex = this._automaticReconnectAttempts;
+  if (attemptIndex >= SOCKET_RECONNECT_DELAYS_MS.length) {
+    console.warn("[WS_HEALTH] automatic reconnect exhausted", { reason });
+    this.notifyDisconnectFailure();
+    return;
+  }
+
+  const delayMs = SOCKET_RECONNECT_DELAYS_MS[attemptIndex];
+  this._automaticReconnectAttempts += 1;
+  console.warn("[WS_HEALTH] scheduling automatic reconnect", {
+    attempt: this._automaticReconnectAttempts,
+    delayMs,
+    reason,
+  });
+
+  this._reconnectTimer = setTimeout(() => {
+    this._reconnectTimer = null;
+    void this.connectSelectorSocket(this.uuid, true).catch(error => {
+      console.warn("[WS_HEALTH] reconnect attempt failed", error);
+      this.scheduleAutomaticReconnect("Reconnect attempt failed");
+    });
+  }, delayMs);
+}
+
+private handleSocketFailure(reason: string, socket: WebSocket): void {
+  if (this.socket !== socket) return;
+
+  const shouldReconnect = this.hasAutomaticReconnectTarget();
+  this.hardDisconnect(reason, false, true, false);
+
+  if (shouldReconnect) {
+    this.scheduleAutomaticReconnect(reason);
+  } else {
+    this.notifyDisconnectFailure();
+  }
+}
+
 private hardDisconnect(
   reason: string = "Socket lost",
-  notifyDisconnect: boolean = true
+  notifyDisconnect: boolean = true,
+  preserveDisconnectHandler: boolean = false,
+  markDisconnected: boolean = true
 ): void {
   if (this._isHardDisconnecting) return;
   this._isHardDisconnecting = true;
 
   try {
     console.log("[WS] hardDisconnect:", reason);
-    this._isDisconnected = true;
+    this._isDisconnected = markDisconnected;
+
+    this.stopSocketHealthMonitoring();
+    if (this._reconnectTimer !== null) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
 
     this._metersSubscribed = false;
     this._lastOutputLevels.clear();
@@ -167,8 +405,6 @@ private hardDisconnect(
     this.remoteStream = null;
 
     try { this.closePeerConnection(); } catch (e) { console.warn("closePeerConnection failed", e); }
-
-    try { InCallManager.stop(); } catch (e) { console.warn("InCallManager.stop failed", e); }
 
     this.safeCall("deactivate").catch(() => {});
 
@@ -201,8 +437,9 @@ private hardDisconnect(
   } finally {
     const callback = this.onDisconnect;
 
-    // clear it first so it cannot loop
-    this.onDisconnect = null;
+    if (!preserveDisconnectHandler) {
+      this.onDisconnect = null;
+    }
     this._isHardDisconnecting = false;
 
     if (notifyDisconnect && callback) {
@@ -234,10 +471,22 @@ private _dbToLinear(db: number): number {
 }
 
 // === notify helpers ===
-private _notifyPortListeners(port: number, level: number) {
-  const set = this._audioListeners.get(port);
-  if (set) set.forEach(cb => { try { cb(level); } catch (_) { } });
-  this._globalAudioListeners.forEach(cb => { try { cb(level); } catch (_) { } });
+  private _notifyPortListeners(port: number, level: number) {
+    const set = this._audioListeners.get(port);
+    if (set) set.forEach(cb => { try { cb(level); } catch (_) { } });
+    this._globalAudioListeners.forEach(cb => { try { cb(level); } catch (_) { } });
+  }
+
+private _hasMeterDemand(): boolean {
+  return this._audioListeners.size > 0 || this._globalAudioListeners.size > 0;
+}
+
+private _refreshMeterSubscription(): void {
+  if (this._hasMeterDemand()) {
+    this.subscribeMeters();
+  } else {
+    this.unsubscribeMeters();
+  }
 }
 
 
@@ -263,7 +512,7 @@ public addAudioListener(port: number, cb: (level: number) => void) {
   }
   set.add(cb);
 
-
+  this._refreshMeterSubscription();
 
   // return unsubscribe
   return () => {
@@ -272,6 +521,7 @@ public addAudioListener(port: number, cb: (level: number) => void) {
       s.delete(cb);
       if (s.size === 0) this._audioListeners.delete(port);
     }
+    this._refreshMeterSubscription();
   };
 }
 
@@ -279,12 +529,8 @@ public getAudioLevel(port: number): number {
   return this._lastOutputLevels.get(port) ?? 0;
 }
 
-  // small helper that only calls native method on iOS and if it exists
+  // Calls the platform-specific native audio helper when the current build provides one.
 public safeCall = async (fnName: keyof AudioModeModuleType) => {
-    if (Platform.OS !== 'ios') {
-      // no-op on Android (or handle Android if you add implementation)
-      return;
-    }
     const module = AudioModeModule;
     if (!module || typeof module[fnName] !== 'function') {
       console.warn(`AudioModeModule.${String(fnName)} not available`);
@@ -410,6 +656,9 @@ public addOmniToList(intercomList: IntercomInfo[]): IntercomInfo[] {
 
         
 public closeSocket(): void {
+  this._lastJoinedTemplate = null;
+  this._lastListenerTemplate = null;
+  this._automaticReconnectAttempts = 0;
   this.hardDisconnect("Client closing", false);
 }
 
@@ -423,7 +672,7 @@ public async enableMicAndSend(): Promise<void> {
 
 
 
-if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
+if (AudioModeModule?.setPlayAndRecordVoiceChat) {
   try {
     await AudioModeModule.setPlayAndRecordVoiceChat();
     console.log("before getUserMedia", await AudioModeModule.debugAudioSession?.());
@@ -442,14 +691,6 @@ if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
   try {
     const stream = await mediaDevices.getUserMedia({ audio: true, video: false });
 
-    if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
-      try {
-        await AudioModeModule.setPlayAndRecordVoiceChat();
-        console.log("after getUserMedia", await AudioModeModule.debugAudioSession?.());
-      } catch (e) {
-        console.warn('AudioModeModule.setPlayAndRecordVoiceChat failed after getUserMedia', e);
-      }
-    }
     const tracks = stream.getAudioTracks();
     const track = tracks && tracks.length > 0 ? tracks[0] : null;
     if (!track) {
@@ -595,11 +836,8 @@ async onRoleListener() {
   // 1. stop local mic / sender first
   this.disableMicAndStop();
 
-  // 2. stop any call-style helpers
-  try { InCallManager.stop(); } catch (e) {}
-
-  // 3. then force iOS into playback/media mode
-  if (Platform.OS === 'ios' && AudioModeModule?.setPlayback) {
+  // 2. switch the native audio coordinator to playback-only mode
+  if (AudioModeModule?.setPlayback) {
     try {
       await AudioModeModule.setPlayback();
       if (AudioModeModule.debugAudioSession) {
@@ -643,6 +881,53 @@ public subscribeToPlayers(cb: (players: PlayerState[]) => void): () => void {
   return () => { this._playersListeners.delete(cb); };
 }
 
+public getLatestTimecode(): string {
+  return this._latestTimecode;
+}
+
+public getLatestTimecodeSequence(): number | null {
+  return this._latestTimecodeSequence;
+}
+
+public markTimecodeRendered(sequence: number | null): void {
+  if (sequence === null) return;
+  this._lastLtcRenderedSequence = sequence;
+  this._lastLtcRenderedAt = monotonicNow();
+}
+
+public addTimecodeListener(cb: (
+  newTimecode: string,
+  sequence: number | null
+) => void): () => void {
+  this._timecodeListeners.add(cb);
+  try { cb(this._latestTimecode, this._latestTimecodeSequence); } catch (_) {}
+  return () => {
+    this._timecodeListeners.delete(cb);
+  };
+}
+
+private _notifyTimecodeListeners(
+  newTimecode: string,
+  sequenceValue: unknown
+): void {
+  const parsedSequence = Number(sequenceValue);
+  const sequence = Number.isFinite(parsedSequence)
+    ? parsedSequence
+    : null;
+
+  this._latestTimecode = newTimecode;
+  this._latestTimecodeSequence = sequence;
+  this._lastLtcReceivedAt = monotonicNow();
+
+  if (this.timecodeSetter) {
+    try { this.timecodeSetter(newTimecode); } catch (_) {}
+  }
+
+  this._timecodeListeners.forEach(cb => {
+    try { cb(newTimecode, sequence); } catch (_) {}
+  });
+}
+
 public async saveTemplateHiddenInputs(
   templateInfo: TemplateInfo,
   hiddenPorts: number[]
@@ -668,68 +953,21 @@ public async saveTemplateHiddenInputs(
 public async fetchTemplateHiddenInputs(
   templateInfo: TemplateInfo
 ): Promise<number[]> {
-  return new Promise((resolve, reject) => {
-    if (
-      !this.socket ||
-      this.socket.readyState !== WebSocket.OPEN
-    ) {
-      reject(new Error("WebSocket is not connected"));
-      return;
-    }
-
-    const request = {
+  const message = await this.requestMessage<any>(
+    {
       action: "get_template_hidden_inputs",
       template: templateInfo,
-    };
+    },
+    "get_template_hidden_inputs"
+  );
 
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const message = JSON.parse(event.data);
-
-        if (
-          message.action !==
-          "get_template_hidden_inputs"
-        ) {
-          return;
-        }
-
-        this.socket?.removeEventListener(
-          "message",
-          handleMessage
-        );
-
-        if (message.error) {
-          reject(new Error(message.error));
-          return;
-        }
-
-        const ports = Array.isArray(message.hiddenPorts)
-          ? message.hiddenPorts
-              .map(Number)
-              .filter((port: number) =>
-                Number.isFinite(port)
-              )
-          : [];
-
-        resolve(ports);
-
-      } catch (error) {
-        this.socket?.removeEventListener(
-          "message",
-          handleMessage
-        );
-
-        reject(error);
-      }
-    };
-
-    this.socket.addEventListener(
-      "message",
-      handleMessage
-    );
-
-    this.socket.send(JSON.stringify(request));
-  });
+  return Array.isArray(message.hiddenPorts)
+    ? message.hiddenPorts
+        .map(Number)
+        .filter((port: number) =>
+          Number.isFinite(port)
+        )
+    : [];
 }
 
 
@@ -738,7 +976,13 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
     if (uuid){
         this.uuid = uuid
     }
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (
+      !this.socket ||
+      (
+        this.socket.readyState !== WebSocket.OPEN &&
+        this.socket.readyState !== WebSocket.CONNECTING
+      )
+    ) {
         this._metersSubscribed = false;
         this._isDisconnected = false;
         const socketUrl = `${this.api_url}/ws/player`;
@@ -762,6 +1006,7 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             : null,
         });
 
+        let activeSocket: WebSocket;
         try {
           const parsed = new URL(socketUrl);
           console.log("[WS_DIAG] parsed socket URL", {
@@ -782,10 +1027,11 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             time: Date.now(),
           });
 
-          this.socket = new WebSocket(socketUrl);
+          activeSocket = new WebSocket(socketUrl);
+          this.socket = activeSocket;
 
           console.log("[WS_DIAG] WebSocket object created", {
-            readyState: this.socket.readyState,
+            readyState: activeSocket.readyState,
             CONNECTING: WebSocket.CONNECTING,
             OPEN: WebSocket.OPEN,
             CLOSING: WebSocket.CLOSING,
@@ -793,53 +1039,120 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
           });
         } catch (e) {
           console.error("[WS_DIAG] new WebSocket threw synchronously", e);
-          this.hardDisconnect("WebSocket constructor threw");
+          this.hardDisconnect(
+            "WebSocket constructor threw",
+            false,
+            true,
+            !isReconnect
+          );
+          if (isReconnect) {
+            this.scheduleAutomaticReconnect("WebSocket constructor threw");
+          } else {
+            this.notifyDisconnectFailure();
+          }
           return;
         }
         const configuration = {
             iceServers: []
           };
 
-        this.socket.onopen = async () => {
+        this._connectTimeout = setTimeout(() => {
+          this.handleSocketFailure("WebSocket open timed out", activeSocket);
+        }, SOCKET_CONNECT_TIMEOUT_MS);
+
+        activeSocket.onopen = async () => {
+          if (this.socket !== activeSocket) return;
+
+          this._isDisconnected = false;
+          this.startSocketHealthMonitoring(activeSocket);
+
+          try {
+            if (!isReconnect) {
+              await this.uuidOrNo(this.uuid);
+            } else if (
+              this.currentRole === "selector" &&
+              this._lastJoinedTemplate
+            ) {
+              await this.safeCall("setPlayAndRecordVoiceChat");
+              await this.playerJoin(this._lastJoinedTemplate);
+            } else if (
+              this.currentRole === "listener" &&
+              this._lastListenerTemplate
+            ) {
+              await this.safeCall("setPlayback");
+              await this.listenerJoin(this._lastListenerTemplate);
+            }
+
+            if (this.socket !== activeSocket) return;
+            this._automaticReconnectAttempts = 0;
             this._isDisconnected = false;
-            if (!isReconnect){
-                this.uuidOrNo(this.uuid)
+            try {
+              this._refreshMeterSubscription();
+            } catch (error) {
+              console.warn("refresh meters on open failed", error);
             }
-            else{
-                if (this.templateInfo){
-                    await this.playerJoin(this.templateInfo)
-                };
-            }
-
-            try { this.subscribeMeters(); } catch (e) { console.warn("subscribeMeters on open failed", e); }
-       }
-        
-
-        this.socket.onclose = () => {
-          this.hardDisconnect("WebSocket closed");
+          } catch (error) {
+            console.warn("[WS_HEALTH] socket join failed", error);
+            this.handleSocketFailure("Socket rejoin failed", activeSocket);
+          }
         };
 
-        this.socket.onerror = (event) => {
+        activeSocket.onerror = (event) => {
           console.warn("[WS] socket error", event);
+          this.handleSocketFailure("WebSocket error", activeSocket);
         };
 
-        this.socket.onclose = (event) => {
+        activeSocket.onclose = (event) => {
           console.warn("[WS] socket closed", {
             code: event.code,
             reason: event.reason,
             wasClean: event.wasClean,
           });
 
-          this.hardDisconnect(`WebSocket closed: ${event.code} ${event.reason}`);
+          this.handleSocketFailure(
+            `WebSocket closed: ${event.code} ${event.reason}`,
+            activeSocket
+          );
         };
 
         // Handle incoming messages
-        this.socket.onmessage = async (event) => {
+        activeSocket.onmessage = async (event) => {
 
 
 
 
-            const msg = JSON.parse(event.data);
+            if (this.socket !== activeSocket) return;
+            this._lastSocketMessageAt = monotonicNow();
+
+            let msg: any;
+            try {
+              msg = JSON.parse(event.data);
+            } catch (error) {
+              console.warn("[WS] failed to parse message", error);
+              return;
+            }
+
+            if (msg.action === "pong") {
+              this._lastPongAt = monotonicNow();
+
+              const serverSentSequence = Number(msg.lastLtcSentSequence);
+              const receivedSequence = this._latestTimecodeSequence;
+              if (
+                Number.isFinite(serverSentSequence) &&
+                receivedSequence !== null &&
+                serverSentSequence - receivedSequence > 50 &&
+                this._lastPongAt - this._lastLtcLagWarningAt > 30_000
+              ) {
+                this._lastLtcLagWarningAt = this._lastPongAt;
+                console.warn("[WS_HEALTH] LTC receive sequence is behind", {
+                  serverEnqueuedSequence: msg.lastLtcEnqueuedSequence,
+                  serverSentSequence,
+                  clientReceivedSequence: receivedSequence,
+                  clientRenderedSequence: this._lastLtcRenderedSequence,
+                });
+              }
+              return;
+            }
       
 
             if (msg.action === 'webrtc_offer') {
@@ -848,7 +1161,8 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
               time: Date.now(),
               state: AppState.currentState,
             });
-            this.pc = new RTCPeerConnection(configuration);
+            const peerConnection = new RTCPeerConnection(configuration);
+            this.pc = peerConnection;
             //startAudioStatsMonitor(this.pc)
 
             //Capture mic
@@ -867,11 +1181,15 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
 
 
             // Handle local ICE candidates
-            this.pc.addEventListener('icecandidate', (e: RTCIceCandidateEvent<'icecandidate'>) => {
+            peerConnection.addEventListener('icecandidate', (e: RTCIceCandidateEvent<'icecandidate'>) => {
               console.log("[RTC] local ICE", { has: !!e.candidate, state: AppState.currentState });
 
-              if (e.candidate && this.socket?.readyState === WebSocket.OPEN) {
-                this.socket.send(JSON.stringify({
+              if (
+                e.candidate &&
+                this.socket === activeSocket &&
+                activeSocket.readyState === WebSocket.OPEN
+              ) {
+                activeSocket.send(JSON.stringify({
                   action: 'webrtc_ice',
                   candidate: {
                     candidate: e.candidate.candidate,
@@ -883,39 +1201,30 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             });
             
             // Handle remote audio
-            this.pc.addEventListener('track', async (e: any) => {
-              if (e.track) {
+            peerConnection.addEventListener('track', async (e: any) => {
+              if (e.track && this.pc === peerConnection) {
                 this.remoteAudioTrack = e.track;
                 console.log("Remote track kind", e.track.kind);
 
                 this.playRemoteStream();
 
-                if (Platform.OS === 'ios' && AudioModeModule?.setPlayAndRecordVoiceChat) {
-                  try {
-                    await AudioModeModule.setPlayAndRecordVoiceChat();
-                    await AudioModeModule.forceSpeaker?.();
-                    console.log(
-                      "after remote track audio session:",
-                      await AudioModeModule.debugAudioSession?.()
-                    );
-                  } catch (e) {
-                    console.warn("failed to reassert audio session after remote track", e);
-                  }
-                }
               }
             });
 
             // Apply server's SDP offer
             const offerDesc = new RTCSessionDescription(msg.offer);
-            await this.pc.setRemoteDescription(offerDesc);
+            await peerConnection.setRemoteDescription(offerDesc);
 
             // Create answer
-            const answerDesc = await this.pc.createAnswer();
-            await this.pc.setLocalDescription(answerDesc);
+            const answerDesc = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answerDesc);
 
             // Send answer back to server (Python → Go)
-            if (this.socket?.readyState === WebSocket.OPEN) {
-              this.socket.send(JSON.stringify({
+            if (
+              this.socket === activeSocket &&
+              activeSocket.readyState === WebSocket.OPEN
+            ) {
+              activeSocket.send(JSON.stringify({
                 action: 'webrtc_answer',
                 answer: { type: answerDesc.type, sdp: answerDesc.sdp }
               }));
@@ -937,8 +1246,11 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             
             if (msg.action === "ltc"){
                 
-                if (this.socket && this.socket.readyState === WebSocket.OPEN && this.timecodeSetter){
-                    this.timecodeSetter(msg.timecode)
+                if (
+                  this.socket === activeSocket &&
+                  activeSocket.readyState === WebSocket.OPEN
+                ) {
+                    this._notifyTimecodeListeners(msg.timecode, msg.sequence)
                 }
             }
 
@@ -1115,8 +1427,11 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             }
 
             if (msg.action === "template_released") {
+              this._lastJoinedTemplate = null;
+              this._lastListenerTemplate = null;
+              this._automaticReconnectAttempts = 0;
               this.hardDisconnect("Template released", false);
-              router.push("/");
+              router.dismissTo("/");
             }
             if (msg.action === "live_update") {
                 if (this.socket && this.socket.readyState === WebSocket.OPEN && 
@@ -1157,6 +1472,196 @@ private sendMessage(msg: any): void {
     }
 }
 
+private requestMessage<T>(
+    request: any,
+    responseAction: string,
+    timeoutMs = 8000
+): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const socket = this.socket;
+
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            reject(new Error("WebSocket is not connected"));
+            return;
+        }
+        const activeSocket = socket;
+
+        let settled = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const handleMessage = (event: MessageEvent) => {
+            let message: any;
+
+            try {
+                message = JSON.parse(event.data);
+            } catch (error) {
+                return;
+            }
+
+            if (message.action !== responseAction) {
+                return;
+            }
+
+            cleanup();
+
+            if (message.error) {
+                finishReject(new Error(message.error));
+                return;
+            }
+
+            finishResolve(message as T);
+        };
+
+        function cleanup() {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            activeSocket.removeEventListener("message", handleMessage);
+        }
+
+        function finishResolve(value: T) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(value);
+        }
+
+        function finishReject(error: Error) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        }
+
+        timeoutId = setTimeout(() => {
+            finishReject(new Error(`Timed out waiting for ${responseAction}`));
+        }, timeoutMs);
+
+        activeSocket.addEventListener("message", handleMessage);
+
+        try {
+            activeSocket.send(JSON.stringify(request));
+        } catch (error) {
+            finishReject(
+                error instanceof Error
+                    ? error
+                    : new Error(`Failed to send ${responseAction} request`)
+            );
+        }
+    });
+}
+
+private normalizeTemplateProfilePayload(message: any): TemplateProfilePayload {
+    const toActiveBoolean = (value: any) =>
+        value === true ||
+        value === 1 ||
+        value === "1" ||
+        String(value).toLowerCase() === "true";
+
+    const profiles = Array.isArray(message.profiles)
+        ? message.profiles.map((profile: any) => ({
+            id: Number(profile.id),
+            templateId: Number(profile.templateId),
+            name: String(profile.name ?? "Default"),
+            specialGroupName1: String(profile.specialGroupName1 ?? "Input Group 1"),
+            specialGroupName2: String(profile.specialGroupName2 ?? "Input Group 2"),
+            allInputsVolume: Number.isFinite(Number(profile.allInputsVolume))
+                ? Number(profile.allInputsVolume)
+                : 1,
+            listenActive: toActiveBoolean(profile.listenActive),
+            createdAt: String(profile.createdAt ?? ""),
+            updatedAt: String(profile.updatedAt ?? ""),
+            lastUsedAt: profile.lastUsedAt ?? null,
+        }))
+        : [];
+
+    const currentProfile = message.currentProfile
+        ? {
+            id: Number(message.currentProfile.id),
+            templateId: Number(message.currentProfile.templateId),
+            name: String(message.currentProfile.name ?? "Default"),
+            specialGroupName1: String(message.currentProfile.specialGroupName1 ?? "Input Group 1"),
+            specialGroupName2: String(message.currentProfile.specialGroupName2 ?? "Input Group 2"),
+            allInputsVolume: Number.isFinite(Number(message.currentProfile.allInputsVolume))
+                ? Number(message.currentProfile.allInputsVolume)
+                : 1,
+            listenActive: toActiveBoolean(message.currentProfile.listenActive),
+            createdAt: String(message.currentProfile.createdAt ?? ""),
+            updatedAt: String(message.currentProfile.updatedAt ?? ""),
+            lastUsedAt: message.currentProfile.lastUsedAt ?? null,
+        }
+        : null;
+
+    const inputVolumes: { [port: number]: number } = {};
+    const rawInputVolumes = message.inputVolumes ?? {};
+    if (rawInputVolumes && typeof rawInputVolumes === "object") {
+        Object.entries(rawInputVolumes).forEach(([port, volume]) => {
+            const numericPort = Number(port);
+            const numericVolume = Number(volume);
+            if (Number.isFinite(numericPort) && Number.isFinite(numericVolume)) {
+                inputVolumes[numericPort] = numericVolume;
+            }
+        });
+    }
+
+    const intercomVolumes: { [id: number]: number } = {};
+    const rawIntercomVolumes = message.intercomVolumes ?? {};
+    if (rawIntercomVolumes && typeof rawIntercomVolumes === "object") {
+        Object.entries(rawIntercomVolumes).forEach(([id, volume]) => {
+            const numericId = Number(id);
+            const numericVolume = Number(volume);
+            if (Number.isFinite(numericId) && Number.isFinite(numericVolume)) {
+                intercomVolumes[numericId] = numericVolume;
+            }
+        });
+    }
+
+    const activeInputs = Array.isArray(message.activeInputs)
+        ? message.activeInputs
+            .map((input: any) => ({
+                id: Number(input.id),
+                port: Number(input.port),
+                name: String(input.name ?? ""),
+                isActive: toActiveBoolean(input.isActive),
+            }))
+            .filter((input: any) => Number.isFinite(input.id) && Number.isFinite(input.port))
+        : undefined;
+
+    const activeIntercoms = Array.isArray(message.activeIntercoms)
+        ? message.activeIntercoms
+            .map((intercom: any) => ({
+                id: Number(intercom.id),
+                port: Number(intercom.port),
+                name: String(intercom.name ?? ""),
+                type: String(intercom.type ?? ""),
+                isActive: toActiveBoolean(intercom.isActive),
+            }))
+            .filter((intercom: any) =>
+                Number.isFinite(intercom.id) &&
+                Number.isFinite(intercom.port) &&
+                intercom.type.length > 0
+            )
+        : undefined;
+
+    const explicitAllInputsVolume = Number(message.allInputsVolume);
+
+    return {
+        profiles,
+        currentProfile,
+        inputVolumes,
+        intercomVolumes,
+        activeInputs,
+        activeIntercoms,
+        allInputsVolume: Number.isFinite(explicitAllInputsVolume)
+            ? explicitAllInputsVolume
+            : currentProfile?.allInputsVolume ?? 1,
+        listenActive: message.listenActive !== undefined
+            ? toActiveBoolean(message.listenActive)
+            : currentProfile?.listenActive ?? false,
+    };
+}
+
 public async updateUuid(templateInfo: TemplateInfo): Promise<void> {
     
     const getOrCreateUUID = async () => {
@@ -1186,109 +1691,63 @@ public async updateUuid(templateInfo: TemplateInfo): Promise<void> {
 }
 
 public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo | null]> {
-    return new Promise<[boolean, TemplateInfo | null]>((resolve, reject) => {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-            reject(new Error('WebSocket is not connected'));
-            return;
-        }
-
-        const fetchTemplateRequest = {  
+    const message = await this.requestMessage<any>(
+        {
             action: "get_template_from_uuid",
             uuid: uuid
+        },
+        "get_template_from_uuid"
+    );
+
+    const template = message.template;
+    let templateInfo: TemplateInfo | null = null
+    if (template) {
+        templateInfo = {
+            id: template.id,
+            name: template.name,
+            noDelayPort: template.noDelayPort,
+            delayPort: template.delayPort,
+            micPort: template.micPort,
+            intercomOutputPort: template.intercomOutputPort,
+            intercomInfo: template.intercomInfo || [],
+            delay: template.delay,
+            omniState: template.omniState,
+            omniName: template.omniName,
+            groupState: template.groupState,
+            groupName: template.groupName,
+            deviceUuid: template.deviceUuid,
+            deviceExpiryDate: template.deviceExpiryDate,
+            lastActivationUtc: template.lastActivationUtc,
+            autoDuck: template.autoDuck,
+            autoDuckGain: template.autoDuckGain,
+            autoDuckRelease: template.autoDuckRelease,
+            autoDuckThreshold: template.autoDuckThreshold,
+            isMaster: template.isMaster,
+            isTabMaster: template.isTabMaster,
+            isSlave: template.isSlave,
+            slaveColor: template.slaveColor,
+            listenDisabled: toBackendBoolean(template.listenDisabled)
         };
+    }
 
-        const handleMessage = (event: MessageEvent) => {
-            const message = JSON.parse(event.data);
-            if (message.action === "get_template_from_uuid") {
-
-                this.socket?.removeEventListener('message', handleMessage);
-
-                if (message.error) {
-                    reject(new Error(message.error));
-                } else {
-                    const template = message.template;
-                    let templateInfo: TemplateInfo | null = null
-                    if (template) {
-                        templateInfo = {
-                            id: template.id,
-                            name: template.name,
-                            noDelayPort: template.noDelayPort,
-                            delayPort: template.delayPort,
-                            micPort: template.micPort,
-                            intercomOutputPort: template.intercomOutputPort,
-                            intercomInfo: template.intercomInfo || [],
-                            delay: template.delay,
-                            omniState: template.omniState,
-                            omniName: template.omniName,
-                            groupState: template.groupState,
-                            groupName: template.groupName,
-                            deviceUuid: template.deviceUuid,
-                            deviceExpiryDate: template.deviceExpiryDate,
-                            lastActivationUtc: template.lastActivationUtc,
-                            autoDuck: template.autoDuck,
-                            autoDuckGain: template.autoDuckGain,
-                            autoDuckRelease: template.autoDuckRelease,
-                            autoDuckThreshold: template.autoDuckThreshold,
-                            isMaster: template.isMaster,
-                            isTabMaster: template.isTabMaster,
-                            isSlave: template.isSlave,
-                            slaveColor: template.slaveColor
-                        };
-                    }
-                    
-                    resolve([message.isExpired, templateInfo]);
-                }
-            }
-        };
-
-        this.socket.addEventListener('message', handleMessage);
-        
-        this.socket.send(JSON.stringify(fetchTemplateRequest));
-    });
+    return [message.isExpired, templateInfo];
 }
 
 
 public async listenerJoin(templateInfo: TemplateInfo) {
-    return new Promise<void>((resolve, reject) => {
-        // Define the join message
-        const joinMessage = {
+    this._lastListenerTemplate = templateInfo;
+    this._lastJoinedTemplate = null;
+    await this.requestMessage<any>(
+        {
             action: "listener_join",
             template: templateInfo
-        };
-
-        // Check WebSocket state
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-            reject(new Error('WebSocket is not connected'));
-            return;
-        }
-
-        // Listen for a one-time response
-        const handleMessage = (event: MessageEvent) => {
-            const message = JSON.parse(event.data);
-
-            if (message.action === "listener_join") {
-                // Remove event listener after receiving the response
-                this.socket?.removeEventListener('message', handleMessage);
-
-                if (message.error) {
-                    reject(new Error(message.error));  // Reject if there’s an error in the response
-                } else {
-                    // Resolve when the response is successfully received
-                    resolve();
-                }
-            }
-        };
-
-        // Add event listener to handle the response
-        this.socket.addEventListener('message', handleMessage);
-
-        // Send the player join message
-        this.socket.send(JSON.stringify(joinMessage));
-        
-    });
+        },
+        "listener_join"
+    );
 }
 
 public async listenerChange(templateInfo: TemplateInfo): Promise<void> {
+    this._lastListenerTemplate = templateInfo;
     const msg = {
         action: "listener_change",
         template: templateInfo,
@@ -1301,44 +1760,16 @@ public async listenerChange(templateInfo: TemplateInfo): Promise<void> {
 
 // Player Join
 public async playerJoin(templateInfo: TemplateInfo): Promise<void> {
+    this._lastJoinedTemplate = templateInfo;
+    this._lastListenerTemplate = null;
     this.templateInfo = templateInfo
-    return new Promise<void>((resolve, reject) => {
-        // Define the join message
-        const joinMessage = {
+    await this.requestMessage<any>(
+        {
             action: "player_join",
             template: templateInfo,
-        };
-
-        // Check WebSocket state
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-            reject(new Error('WebSocket is not connected'));
-            return;
-        }
-
-        // Listen for a one-time response
-        const handleMessage = (event: MessageEvent) => {
-            const message = JSON.parse(event.data);
-
-            if (message.action === "player_join") {
-                // Remove event listener after receiving the response
-                this.socket?.removeEventListener('message', handleMessage);
-
-                if (message.error) {
-                    reject(new Error(message.error));  // Reject if there’s an error in the response
-                } else {
-                    // Resolve when the response is successfully received
-                    resolve();
-                }
-            }
-        };
-
-        // Add event listener to handle the response
-        this.socket.addEventListener('message', handleMessage);
-
-        // Send the player join message
-        this.socket.send(JSON.stringify(joinMessage));
-        
-    });
+        },
+        "player_join"
+    );
 }
 // Send Input On
 public async sendInputOn(templateInfo: TemplateInfo, port: number, isIntercom: boolean, tabId?: number): Promise<void> {
@@ -1382,37 +1813,18 @@ public async saveTemplateInputGroups(
 public async fetchTemplateInputGroups(
   templateInfo: TemplateInfo
 ): Promise<{ group1: number[]; group2: number[] }> {
-  return new Promise((resolve, reject) => {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      reject(new Error("WebSocket is not connected"));
-      return;
-    }
-
-    const request = {
+  const message = await this.requestMessage<any>(
+    {
       action: "get_template_input_groups",
       template: templateInfo,
-    };
+    },
+    "get_template_input_groups"
+  );
 
-    const handleMessage = (event: MessageEvent) => {
-      const message = JSON.parse(event.data);
-
-      if (message.action === "get_template_input_groups") {
-        this.socket?.removeEventListener("message", handleMessage);
-
-        if (message.error) {
-          reject(new Error(message.error));
-        } else {
-          resolve({
-            group1: message.groups?.group1 ?? [],
-            group2: message.groups?.group2 ?? [],
-          });
-        }
-      }
-    };
-
-    this.socket.addEventListener("message", handleMessage);
-    this.socket.send(JSON.stringify(request));
-  });
+  return {
+    group1: message.groups?.group1 ?? [],
+    group2: message.groups?.group2 ?? [],
+  };
 }
 
 public async saveTemplateInputGroupNames(
@@ -1431,37 +1843,139 @@ public async saveTemplateInputGroupNames(
 public async fetchTemplateInputGroupNames(
   templateInfo: TemplateInfo
 ): Promise<{ group1: string; group2: string }> {
-  return new Promise((resolve, reject) => {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      reject(new Error("WebSocket is not connected"));
-      return;
-    }
-
-    const request = {
+  const message = await this.requestMessage<any>(
+    {
       action: "get_template_input_group_names",
       template: templateInfo,
-    };
+    },
+    "get_template_input_group_names"
+  );
 
-    const handleMessage = (event: MessageEvent) => {
-      const message = JSON.parse(event.data);
+  return {
+    group1: message.names?.group1 ?? "Input Group 1",
+    group2: message.names?.group2 ?? "Input Group 2",
+  };
+}
 
-      if (message.action === "get_template_input_group_names") {
-        this.socket?.removeEventListener("message", handleMessage);
+public async fetchTemplateProfiles(
+  templateInfo: TemplateInfo
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "get_template_profiles",
+      template: templateInfo,
+    },
+    "get_template_profiles"
+  );
 
-        if (message.error) {
-          reject(new Error(message.error));
-        } else {
-          resolve({
-            group1: message.names?.group1 ?? "Input Group 1",
-            group2: message.names?.group2 ?? "Input Group 2",
-          });
-        }
-      }
-    };
+  return this.normalizeTemplateProfilePayload(message);
+}
 
-    this.socket.addEventListener("message", handleMessage);
-    this.socket.send(JSON.stringify(request));
+public async createTemplateProfile(
+  templateInfo: TemplateInfo,
+  name: string
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "create_template_profile",
+      template: templateInfo,
+      name,
+    },
+    "create_template_profile"
+  );
+
+  return this.normalizeTemplateProfilePayload(message);
+}
+
+public async selectTemplateProfile(
+  templateInfo: TemplateInfo,
+  profileId: number
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "select_template_profile",
+      template: templateInfo,
+      profileId,
+    },
+    "select_template_profile"
+  );
+
+  return this.normalizeTemplateProfilePayload(message);
+}
+
+public async renameTemplateProfile(
+  templateInfo: TemplateInfo,
+  profileId: number,
+  name: string
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "rename_template_profile",
+      template: templateInfo,
+      profileId,
+      name,
+    },
+    "rename_template_profile"
+  );
+
+  return this.normalizeTemplateProfilePayload(message);
+}
+
+public async deleteTemplateProfile(
+  templateInfo: TemplateInfo,
+  profileId: number
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "delete_template_profile",
+      template: templateInfo,
+      profileId,
+    },
+    "delete_template_profile"
+  );
+
+  return this.normalizeTemplateProfilePayload(message);
+}
+
+public async fetchTemplateProfileState(
+  templateInfo: TemplateInfo
+): Promise<TemplateProfilePayload> {
+  const message = await this.requestMessage<any>(
+    {
+      action: "get_template_profile_state",
+      template: templateInfo,
+    },
+    "get_template_profile_state"
+  );
+
+  return this.normalizeTemplateProfilePayload(message);
+}
+
+public async saveTemplateAllInputsVolume(
+  templateInfo: TemplateInfo,
+  volume: number
+): Promise<void> {
+  this.sendMessage({
+    action: "save_template_all_inputs_volume",
+    template: templateInfo,
+    volume,
   });
+}
+
+public async saveTemplateListenActive(
+  templateInfo: TemplateInfo,
+  active: boolean,
+  profileId?: number
+): Promise<void> {
+  await this.requestMessage<any>(
+    {
+      action: "save_template_listen_active",
+      template: templateInfo,
+      active,
+      profileId,
+    },
+    "save_template_listen_active"
+  );
 }
 
 public async sendOnChangeVolume(port: number, volume: number): Promise<void> {
@@ -1474,8 +1988,32 @@ public async sendOnChangeVolume(port: number, volume: number): Promise<void> {
     this.sendMessage(msg);
 }
 
+public async sendOnChangeIntercomVolume(
+    intercomId: number,
+    port: number,
+    type: string,
+    volume: number
+): Promise<void> {
+    const msg = {
+        action: "change_intercom_volume",
+        template: this.templateInfo,
+        intercomId,
+        port,
+        type,
+        volume,
+    };
+    this.sendMessage(msg);
+}
+
 // Send Input Off
-public async sendInputOff(templateInfo: TemplateInfo, port: number, isIntercom: boolean, isCleanup: boolean, tabId?: number): Promise<void> {
+public async sendInputOff(
+    templateInfo: TemplateInfo,
+    port: number,
+    isIntercom: boolean,
+    isCleanup: boolean,
+    tabId?: number,
+    skipProfileSave?: boolean
+): Promise<void> {
     const msg = {
         action: "input_off",
         template: templateInfo,
@@ -1483,7 +2021,8 @@ public async sendInputOff(templateInfo: TemplateInfo, port: number, isIntercom: 
         type: "output",
         isIntercom: isIntercom,
         isCleanup: isCleanup,
-        tabId: tabId
+        tabId: tabId,
+        skipProfileSave: !!skipProfileSave,
     };
     this.sendMessage(msg);
 }
@@ -1500,12 +2039,17 @@ public async sendOutputOn(templateInfo: TemplateInfo, port: number): Promise<voi
 }
 
 // Send Output Off
-public async sendOutputOff(templateInfo: TemplateInfo, port: number): Promise<void> {
+public async sendOutputOff(
+    templateInfo: TemplateInfo,
+    port: number,
+    skipProfileSave?: boolean
+): Promise<void> {
     const msg = {
         action: "output_off",
         template: templateInfo,
         port: port,
         type: "input",
+        skipProfileSave: !!skipProfileSave,
     };
     this.sendMessage(msg);
 }
@@ -1625,6 +2169,9 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
       };
 
       this.sendMessage(msg);
+      this._lastListenerTemplate = null;
+      this._lastJoinedTemplate = null;
+      this._automaticReconnectAttempts = 0;
       this.hardDisconnect("Listener exit", false);
     }
 
@@ -1635,7 +2182,10 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
       };
 
       this.sendMessage(msg);
-      this.hardDisconnect("Player exit");
+      this._lastJoinedTemplate = null;
+      this._lastListenerTemplate = null;
+      this._automaticReconnectAttempts = 0;
+      this.hardDisconnect("Player exit", false);
     }
     
     // public async sendTemplateInfoList(templateInfoList: TemplateInfo[]): Promise<void> {
@@ -1661,171 +2211,87 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
     // };
 
     public async fetchInputs(templateInfo?: TemplateInfo): Promise<InputInfo[]> {
-        return new Promise<InputInfo[]>((resolve, reject) => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-                reject(new Error('WebSocket is not connected'));
-                return;
-            }
-    
-            const fetchInputsRequest = {
+        const message = await this.requestMessage<any>(
+            {
                 action: "get_inputs",
                 template: templateInfo ?? this.templateInfo ?? {}
-            };
-    
-            // Listen for a one-time response
-            const handleMessage = (event: MessageEvent) => {
-                const message = JSON.parse(event.data);
-    
-                if (message.action === "get_inputs") {
-                    this.socket?.removeEventListener('message', handleMessage);
-    
-                    if (message.error) {
-                        reject(new Error(message.error));
-                    } else {
-                        const inputInfoList: InputInfo[] = message.inputs.map((input: any) => ({
-                            port: input.port,
-                            name: input.name,
-                            picturePath: input.picturePath
-                        }));
-                        resolve(inputInfoList);
-                    }
-                }
-            };
-    
-            this.socket.addEventListener('message', handleMessage);
-    
-            this.socket.send(JSON.stringify(fetchInputsRequest));
-        });
+            },
+            "get_inputs"
+        );
+
+        return message.inputs.map((input: any) => ({
+            port: input.port,
+            name: input.name,
+            picturePath: input.picturePath
+        }));
     }
 
     public async fetchActivatedIntercoms(): Promise<IntercomInfo[]> {
-        return new Promise<IntercomInfo[]>((resolve, reject) => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-                reject(new Error('WebSocket is not connected'));
-                return;
-            }
-    
-            const fetchIntercomsRequest = {
+        const message = await this.requestMessage<any>(
+            {
                 action: "get_activated_intercoms",
-            };
-    
-            // Listen for a one-time response
-            const handleMessage = (event: MessageEvent) => {
-                const message = JSON.parse(event.data);
-                if (message.action === "get_activated_intercoms") {
-                    this.socket?.removeEventListener('message', handleMessage);
-    
-                    if (message.error) {
-                        reject(new Error(message.error));
-                    } else {
-                        const activatedInputInfoList = message.intercoms.map((intercom: any) => ({
-                            id: intercom.id,
-                            port: intercom.port,
-                            name: intercom.name,
-                            type: intercom.type,
-                            isActivated: intercom.isActivated
-                        }));
-                        resolve(activatedInputInfoList);
-                    }
-                }
-            };
-    
-            this.socket.addEventListener('message', handleMessage);
-    
-            this.socket.send(JSON.stringify(fetchIntercomsRequest));
-        });
+            },
+            "get_activated_intercoms"
+        );
+
+        return message.intercoms.map((intercom: any) => ({
+            id: intercom.id,
+            port: intercom.port,
+            name: intercom.name,
+            type: intercom.type,
+            isActivated: intercom.isActivated
+        }));
     }
 
     public async fetchActivatedInputs(): Promise<InputInfo[]> {
-        return new Promise<InputInfo[]>((resolve, reject) => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-                reject(new Error('WebSocket is not connected'));
-                return;
-            }
-    
-            const fetchInputsRequest = {
+        const message = await this.requestMessage<any>(
+            {
                 action: "get_activated_inputs",
-            };
-    
-            // Listen for a one-time response
-            const handleMessage = (event: MessageEvent) => {
-                const message = JSON.parse(event.data);
-                if (message.action === "get_activated_inputs") {
-                    this.socket?.removeEventListener('message', handleMessage);
-    
-                    if (message.error) {
-                        reject(new Error(message.error));
-                    } else {
-                        const activatedInputInfoList = message.inputs.map((input: any) => ({
-                            id: input.id,
-                            port: input.port,
-                            name: input.name,
-                            isActivated: input.isActivated
-                        }));
-                        resolve(activatedInputInfoList);
-                    }
-                }
-            };
-    
-            this.socket.addEventListener('message', handleMessage);
-    
-            this.socket.send(JSON.stringify(fetchInputsRequest));
-        });
+            },
+            "get_activated_inputs"
+        );
+
+        return message.inputs.map((input: any) => ({
+            id: input.id,
+            port: input.port,
+            name: input.name,
+            isActivated: input.isActivated
+        }));
     }
 
     public async fetchTemplates(): Promise<TemplateInfo[]> {
-        return new Promise<TemplateInfo[]>((resolve, reject) => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-                reject(new Error('WebSocket is not connected'));
-                return;
-            }
-    
-            const fetchTemplatesRequest = {
+        const message = await this.requestMessage<any>(
+            {
                 action: "get_templates",
                 template: {} // optional, no data needed
-            };
-    
-            const handleMessage = (event: MessageEvent) => {
-                const message = JSON.parse(event.data);
-    
-                if (message.action === "get_templates") {
-                    this.socket?.removeEventListener('message', handleMessage);
-    
-                    if (message.error) {
-                        reject(new Error(message.error));
-                    } else {
-                        const templateInfoList: TemplateInfo[] = message.templates.map((template: any) => ({
-                            id: template.id,
-                            name: template.name,
-                            noDelayPort: template.noDelayPort,
-                            delayPort: template.delayPort,
-                            micPort: template.micPort,
-                            intercomOutputPort: template.intercomOutputPort,
-                            intercomInfo: template.intercomInfo || [],
-                            delay: template.delay,
-                            omniState: template.omniState,
-                            omniName: template.omniName,
-                            groupState: template.groupState,
-                            groupName: template.groupName,
-                            deviceUuid: template.deviceUuid,
-                            deviceExpiryDate: template.deviceExpiryDate,
-                            lastActivationUtc: template.lastActivationUtc,
-                            autoDuck: template.autoDuck,
-                            autoDuckGain: template.autoDuckGain,
-                            isMaster: template.isMaster,
-                            isTabMaster: template.isTabMaster,
-                            isSlave: template.isSlave,
-                            slaveColor: template.slaveColor
-                        }));
-                        resolve(templateInfoList);
-                    }
-                }
-            };
-    
-            this.socket.addEventListener('message', handleMessage);
-    
-            this.socket.send(JSON.stringify(fetchTemplatesRequest));
-        });
+            },
+            "get_templates"
+        );
+
+        return message.templates.map((template: any) => ({
+            id: template.id,
+            name: template.name,
+            noDelayPort: template.noDelayPort,
+            delayPort: template.delayPort,
+            micPort: template.micPort,
+            intercomOutputPort: template.intercomOutputPort,
+            intercomInfo: template.intercomInfo || [],
+            delay: template.delay,
+            omniState: template.omniState,
+            omniName: template.omniName,
+            groupState: template.groupState,
+            groupName: template.groupName,
+            deviceUuid: template.deviceUuid,
+            deviceExpiryDate: template.deviceExpiryDate,
+            lastActivationUtc: template.lastActivationUtc,
+            autoDuck: template.autoDuck,
+            autoDuckGain: template.autoDuckGain,
+            isMaster: template.isMaster,
+            isTabMaster: template.isTabMaster,
+            isSlave: template.isSlave,
+            slaveColor: template.slaveColor,
+            listenDisabled: toBackendBoolean(template.listenDisabled)
+        }));
     }
   
     // Optional: Method to update the API URL
@@ -1833,8 +2299,3 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
       this.api_url = url;
     }
   }
-
-
-
-
-

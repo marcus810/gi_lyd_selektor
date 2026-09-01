@@ -1,7 +1,8 @@
 
 
 /* libraries */
-import { View, Text, SafeAreaView, AppState, AppStateStatus } from 'react-native'
+import { View, Text, AppState, AppStateStatus } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
 /* our files */
@@ -24,6 +25,8 @@ const template_selektor = () => {
   const [isTablet, setIsTablet] = useState(false);
 
 useEffect(() => {
+  let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+
   const fetchData = async () => {
     try {
       const type = await Device.getDeviceTypeAsync();
@@ -45,11 +48,11 @@ useEffect(() => {
   fetchData();
 
   const goToIndexScreen = () => {
-    router.push('/');
+    router.dismissTo('/');
   };
 
   const handleSocketDisconnect = () => {
-    setTimeout(() => {
+    redirectTimer = setTimeout(() => {
       Alert.alert(
         "Failed to Reconnect",
         "The connection could not be restored. You will be redirected to the main screen.",
@@ -58,41 +61,52 @@ useEffect(() => {
     }, 500);
   };
 
-  db.onSocketDisconnect(handleSocketDisconnect);
+  const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect);
+
+  return () => {
+    removeDisconnectHandler();
+    if (redirectTimer !== null) {
+      clearTimeout(redirectTimer);
+    }
+  };
 }, []);
 
   const goToIndexScreen = () => {
     db.closeSocket()
-    router.push('/')
+    router.dismissTo('/')
   };
 
   const TemplateInfoArr = TemplateContainer(templateInfoList, isTablet)
 
   if (isTablet) return (
-    <GestureHandlerRootView>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         
 
             
           <View style={styles.templateSelectorStyles.container}>
-            <View style={{height:80, display: "flex", flexDirection: "row", alignItems: 'center', justifyContent: "center"}}>
-              <View style={{alignSelf: "center", justifyContent: "flex-start", flex:0.5}}>
+            <View style={styles.templateSelectorStyles.header}>
+              <View style={styles.templateSelectorStyles.headerSide}>
               {generalComponent.getButton({
                 title: "Go Back",
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
+                pDefaultButtonBgColor: styles.palette.control,
+                pPressedButtonBgColor: styles.palette.controlPressed,
                 onPress: () => goToIndexScreen()
               })}
               </View>
-              <View style={{alignSelf: "center", justifyContent: "center", flex:5}}>
+              <View style={styles.templateSelectorStyles.headerCenter}>
                 <Text style={styles.templateSelectorStyles.title}>Choose template</Text>
               </View>
+              <View style={styles.templateSelectorStyles.headerSide} />
             </View>
             
             
             <ScrollView 
               horizontal={false}
               bounces={false}
+              contentContainerStyle={{ paddingBottom: 16 }}
             >
               <View style={styles.templateSelectorStyles.scrollObjectContainer}>
 
@@ -107,22 +121,62 @@ useEffect(() => {
     </GestureHandlerRootView>
   )
   else return (
-    <GestureHandlerRootView>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         
 
             
           <View style={styles.templateSelectorStyles.container}>
 
-              <View style={{alignSelf: "center", justifyContent: "space-between", flex:0.12, flexDirection: "row", width: "100%", alignContent: "center", alignItems: "center"}}>
+              <View style={styles.templateSelectorStyles.header}>
+              <View
+                style={{
+                  ...styles.templateSelectorStyles.headerSide,
+                  flex: 0,
+                  width: 88,
+                  minWidth: 88,
+                  alignItems: 'flex-start',
+                }}
+              >
               {generalComponent.getButton({
                 title: "Go Back",
-                buttonStyle: styles.templateSelectorStyles.button,
+                buttonStyle: {
+                  ...styles.templateSelectorStyles.button,
+                  width: 78,
+                  height: 44,
+                  marginLeft: 0,
+                  paddingHorizontal: 5,
+                },
                 textStyle: styles.generalStyles.text,
+                pDefaultButtonBgColor: styles.palette.control,
+                pPressedButtonBgColor: styles.palette.controlPressed,
                 onPress: () => goToIndexScreen()
                 
               })}
-              <Text style={{...styles.templateSelectorStyles.title, fontSize: 30, justifyContent:"center", alignItems:"center"}}>Choose template</Text>
+              </View>
+              <View
+                style={{
+                  ...styles.templateSelectorStyles.headerCenter,
+                  flex: 1,
+                  minWidth: 0,
+                  paddingHorizontal: 8,
+                }}
+              >
+              <Text
+                style={{
+                  ...styles.templateSelectorStyles.title,
+                  fontSize: 24,
+                  justifyContent:"center",
+                  alignItems:"center",
+                }}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
+                Choose template
+              </Text>
+              </View>
+              <View style={{ ...styles.templateSelectorStyles.headerSide, flex: 0, width: 88, minWidth: 88 }} />
               </View>
 
 
@@ -133,6 +187,7 @@ useEffect(() => {
               horizontal={false}
               bounces={false}
               style={{ flex:1}}
+              contentContainerStyle={{ paddingBottom: 16 }}
             >
               <View style={{...styles.templateSelectorStyles.scrollObjectContainer, width: misc.getLandscapeHeight()}}>
 

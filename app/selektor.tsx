@@ -1,7 +1,8 @@
 
 
 /* libraries */
-import { View, Text, TextInput, SafeAreaView, AppState, AppStateStatus, Pressable, LayoutChangeEvent, Dimensions, Modal, KeyboardAvoidingView, Platform, Button } from 'react-native'
+import { View, Text, TextInput, AppState, AppStateStatus, Pressable, LayoutChangeEvent, Dimensions, Modal, KeyboardAvoidingView, Platform, Button } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
 /* our files */
@@ -11,14 +12,123 @@ import * as generalComponent from '../scripts/general_scripts/custom_components'
 import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter, useGlobalSearchParams } from 'expo-router'
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useIsFocused } from '@react-navigation/native'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Device from 'expo-device';
 import Slider from "@react-native-community/slider";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const TIMECODE_RENDER_THROTTLE_MS = 100;
+
+const monotonicNow = (): number => {
+  if (
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+  ) {
+    return globalThis.performance.now();
+  }
+
+  return Date.now();
+};
+
+type TimecodeValueProps = {
+  style?: any;
+  numberOfLines?: number;
+};
+
+type TimecodeSample = {
+  value: string;
+  sequence: number | null;
+};
+
+const TimecodeValue = React.memo(({
+  style,
+  numberOfLines,
+}: TimecodeValueProps) => {
+  const db = useMemo(() => DatabaseHandler.getInstance(), []);
+  const pendingTimecodeRef = useRef<TimecodeSample>({
+    value: db.getLatestTimecode(),
+    sequence: db.getLatestTimecodeSequence(),
+  });
+  const [timecode, setTimecode] = useState<TimecodeSample>(
+    pendingTimecodeRef.current
+  );
+  const lastRenderAtRef = useRef(0);
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushDisplay = useCallback(() => {
+    if (renderTimerRef.current) {
+      clearTimeout(renderTimerRef.current);
+      renderTimerRef.current = null;
+    }
+
+    lastRenderAtRef.current = monotonicNow();
+    setTimecode({ ...pendingTimecodeRef.current });
+  }, []);
+
+  const updateDisplay = useCallback((
+    newTimecode: string,
+    sequence: number | null
+  ) => {
+    pendingTimecodeRef.current = {
+      value: newTimecode,
+      sequence,
+    };
+
+    const elapsed = monotonicNow() - lastRenderAtRef.current;
+    if (elapsed >= TIMECODE_RENDER_THROTTLE_MS) {
+      flushDisplay();
+      return;
+    }
+
+    if (renderTimerRef.current) {
+      return;
+    }
+
+    renderTimerRef.current = setTimeout(() => {
+      renderTimerRef.current = null;
+      lastRenderAtRef.current = monotonicNow();
+      setTimecode({ ...pendingTimecodeRef.current });
+    }, Math.max(0, TIMECODE_RENDER_THROTTLE_MS - elapsed));
+  }, [flushDisplay]);
+
+  useEffect(() => {
+    const unsubscribe = db.addTimecodeListener(updateDisplay);
+
+    return () => {
+      unsubscribe();
+      if (renderTimerRef.current) {
+        clearTimeout(renderTimerRef.current);
+        renderTimerRef.current = null;
+      }
+    };
+  }, [db, updateDisplay]);
+
+  useEffect(() => {
+    db.markTimecodeRendered(timecode.sequence);
+  }, [db, timecode.sequence]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextAppState: AppStateStatus) => {
+      if (nextAppState === "active") {
+        flushDisplay();
+      }
+    });
+
+    return () => sub.remove();
+  }, [flushDisplay]);
+
+  return (
+    <Text style={style} numberOfLines={numberOfLines}>
+      {timecode.value}
+    </Text>
+  );
+});
 
 const selektor = () => {
   /*routing*/
   const router = useRouter()
+  const isFocused = useIsFocused()
   const db = DatabaseHandler.getInstance()
   const { template } = useGlobalSearchParams(); // Access the 'template' query parameter
 
@@ -267,7 +377,7 @@ const tabSlaveIntercoms = useMemo(
 );
 
 useEffect(() => {
-  if (!isAppActive) return;
+  if (!isAppActive || !isFocused) return;
   if (!db.isDisconnected()) return;
 
   Alert.alert(
@@ -275,7 +385,7 @@ useEffect(() => {
     "The connection could not be restored. You will be redirected to the main screen.",
     [{ text: "OK", onPress: () => goToIndexScreen(chosenTemplate as types.TemplateInfo) }]
   );
-}, [isAppActive, chosenTemplate]);
+}, [isAppActive, isFocused, chosenTemplate]);
 
 const currentInputToggleStates = useMemo(() => {
   if (chosenTemplate?.isTabMaster) {
@@ -370,13 +480,18 @@ useEffect(() => {
   setInputToggleStates(filteredInputToggles);
 }, [inputInfoList, intercomInfoList, chosenTemplate?.isTabMaster]);
 
-const outputCount = useMemo(
-  () => intercomInfoList.filter(ic => ic.type === "output").length,
+const intercomsWithPorts = useMemo(
+  () => intercomInfoList.filter(ic => Number(ic.port) !== -1),
   [intercomInfoList]
 );
+
+const outputCount = useMemo(
+  () => intercomsWithPorts.filter(ic => ic.type === "output").length,
+  [intercomsWithPorts]
+);
 const inputCount = useMemo(
-  () => intercomInfoList.filter(ic => ic.type === "input").length,
-  [intercomInfoList]
+  () => intercomsWithPorts.filter(ic => ic.type === "input").length,
+  [intercomsWithPorts]
 );
 
 // How many “tiles pages” are needed (based on the larger of the two lists)
@@ -418,51 +533,57 @@ const [editingFlashOn, setEditingFlashOn] = useState(false)
 
   const FOOTER_GROUP_BUTTON_STYLE = {
     height: 37,
-    maxWidth: 90,
-    minWidth: 90,
+    maxWidth: 80,
+    minWidth: 80,
     justifyContent: 'center',
     alignItems: 'center',
     alignContent: 'center',
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
     paddingVertical: 6,
+    flex: 0,
     flexShrink: 0,
   } as const
 
+  const PHONE_FOOTER_BUTTON_HEIGHT = "64%" as const
+  const PHONE_FOOTER_TEXT_SIZE = 10
+  const PHONE_FOOTER_SMALL_TEXT_SIZE = 9
+
   const PHONE_GROUP_BUTTON_STYLE = {
-  height: '70%',
-  minWidth: '18%',
-  maxWidth: '18%',
-  justifyContent: 'center',
-  alignItems: 'center',
-  alignContent: 'center',
-  paddingHorizontal: 10,
-  paddingVertical: 8,
-  flexShrink: 0,
-} as const
+    height: '72%',
+    minWidth: '20%',
+    maxWidth: '20%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    flexShrink: 0,
+  } as const
 
   const SPECIAL_INPUT_GROUP_BUTTON_STYLE = {
   height: 37,
-  minWidth: 90,
-  maxWidth: 90,
+  minWidth: 80,
+  maxWidth: 80,
   justifyContent: 'center',
   alignItems: 'center',
   alignContent: 'center',
-  paddingHorizontal: 8,
+  paddingHorizontal: 5,
   paddingVertical: 6,
+  flex: 0,
   flexShrink: 0,
 } as const
 
   const SPECIAL_GROUP_COLORS = {
     group1: {
-      base: '#b94a48',
-      active: '#e87a76',
+      base: 'rgba(185, 74, 72, 0.72)',
+      active: 'rgba(232, 122, 118, 0.92)',
     },
     group2: {
-      base: '#3f6fb6',
-      active: '#81aef1',
+      base: 'rgba(63, 111, 182, 0.72)',
+      active: 'rgba(129, 174, 241, 0.92)',
     },
-    editFlashOn: '#2f80ff',
-    editFlashOff: '#8ab6ff',
+    editFlashOn: styles.palette.cyan,
+    editFlashOff: styles.palette.cyanBase,
   } as const
 
   const [loading, setLoading] = useState(true);  // Add loading state
@@ -487,21 +608,109 @@ useEffect(() => {
   screenWidth,
 ]);
 
-  const timecodeRef = useRef("No timecode");
-  const [, forceRender] = useState(0); // Dummy state to trigger updates
-  const lastRenderTime = useRef(0);
-  const throttleDuration = 100; // in milliseconds, e.g., 100ms = max 10 updates/sec
-
   const [isMuted, setIsMuted] = useState(!db.isMuted);
+  const listenActiveRef = useRef(!db.isMuted);
       const [, setTick] = useState(0)
   const goToIndexScreen = (chosenTemplate: types.TemplateInfo) => {
-    db.playerExit(chosenTemplate)
-    router.push('/')
+    void db.playerExit(chosenTemplate)
+    router.dismissTo('/')
   };
 
   const [allInputsSliderValue, setAllInputsSliderValue] = useState(1);
   const [inputVolumes, setInputVolumes] = useState<{ [port: number]: number }>({});
+  const [intercomVolumes, setIntercomVolumes] = useState<{ [id: number]: number }>({});
   const [listenVolumeModalVisible, setListenVolumeModalVisible] = useState(false);
+  const [templateProfiles, setTemplateProfiles] = useState<types.TemplateProfile[]>([]);
+  const [activeTemplateProfile, setActiveTemplateProfile] = useState<types.TemplateProfile | null>(null);
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [renamingProfileId, setRenamingProfileId] = useState<number | null>(null);
+  const [renameProfileName, setRenameProfileName] = useState("");
+  const [profileActionError, setProfileActionError] = useState<string | null>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const listenDisabled = chosenTemplate?.listenDisabled === true;
+  const PROFILE_LIMIT = 8;
+
+  const getProfileListenActive = (
+    profileState: types.TemplateProfilePayload,
+    templateInfo?: types.TemplateInfo | null
+  ) => {
+    if (templateInfo?.listenDisabled) return false;
+    return profileState.listenActive ??
+      profileState.currentProfile?.listenActive ??
+      false;
+  };
+
+  const applyListenActiveState = (listenActive: boolean) => {
+    listenActiveRef.current = listenActive;
+    setIsMuted(listenActive);
+    db.isMuted = !listenActive;
+    db.playRemoteStream();
+  };
+
+  const defaultProfileForPhone = (
+    profiles: types.TemplateProfile[]
+  ) =>
+    profiles.find(profile =>
+      profile.name.trim().toLowerCase() === "default"
+    ) ?? profiles[0] ?? null;
+
+  const getPhoneListenStorageKey = (
+    templateInfo: types.TemplateInfo
+  ) => `phone_default_listen_active:${templateInfo.id}`;
+
+  const readPhoneDefaultListenActive = async (
+    templateInfo: types.TemplateInfo
+  ): Promise<boolean | null> => {
+    try {
+      const value = await AsyncStorage.getItem(
+        getPhoneListenStorageKey(templateInfo)
+      );
+
+      if (value == null) return null;
+      return value === "1";
+    } catch (error) {
+      console.warn("Failed to read phone listen state", error);
+      return null;
+    }
+  };
+
+  const savePhoneDefaultListenActive = async (
+    templateInfo: types.TemplateInfo,
+    active: boolean
+  ) => {
+    try {
+      await AsyncStorage.setItem(
+        getPhoneListenStorageKey(templateInfo),
+        active ? "1" : "0"
+      );
+    } catch (error) {
+      console.warn("Failed to save phone listen state", error);
+    }
+  };
+
+  const persistListenActive = async (
+    templateInfo: types.TemplateInfo,
+    active: boolean,
+    phoneMode: boolean,
+    profileId?: number
+  ) => {
+    if (phoneMode) {
+      await savePhoneDefaultListenActive(templateInfo, active);
+    }
+
+    await db.saveTemplateListenActive(
+      templateInfo,
+      active,
+      profileId
+    );
+  };
+
+  useEffect(() => {
+    if (!listenDisabled) return;
+
+    applyListenActiveState(false);
+  }, [listenDisabled]);
 
   const handleSocketDisconnect = () => {
       // Handle the case where the socket fails to reconnect after 3 attempts
@@ -524,8 +733,28 @@ const handleSingleInputVolumeChange = (port: number, value: number) => {
   db.sendOnChangeVolume(port, value);
 };
 
+const handleIntercomVolumeChange = (
+  intercom: types.IntercomInfo,
+  value: number
+) => {
+  setIntercomVolumes(prev => ({
+    ...prev,
+    [intercom.id]: value,
+  }));
+
+  db.sendOnChangeIntercomVolume(
+    intercom.id,
+    intercom.port,
+    intercom.type,
+    value
+  );
+};
+
 const handleAllInputsVolumeChange = (value: number) => {
   setAllInputsSliderValue(value);
+  if (chosenTemplate) {
+    db.saveTemplateAllInputsVolume(chosenTemplate, value);
+  }
   setInputVolumes(prev => {
     const next = { ...prev };
     inputInfoList.forEach(input => {
@@ -538,6 +767,9 @@ const handleAllInputsVolumeChange = (value: number) => {
 
 const handleResetInputVolumes = () => {
   setAllInputsSliderValue(1);
+  if (chosenTemplate) {
+    db.saveTemplateAllInputsVolume(chosenTemplate, 1);
+  }
   setInputVolumes(prev => {
     const next = { ...prev };
     inputInfoList.forEach(input => {
@@ -603,7 +835,7 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
-  if (!editingSpecialGroup) {
+  if (!editingSpecialGroup || !isFocused) {
     setEditingFlashOn(false);
     return;
   }
@@ -614,24 +846,26 @@ useEffect(() => {
   }, 450);
 
   return () => clearInterval(interval);
-}, [editingSpecialGroup]);
+}, [editingSpecialGroup, isFocused]);
 
 
   useEffect(() => {
-    
-    const fetchDeviceType = async () => {
-      const type = await Device.getDeviceTypeAsync();
-      setIsTablet(type === Device.DeviceType.TABLET);
-    };
-    fetchDeviceType();
+    let cancelled = false;
+    let joinedTemplate: types.TemplateInfo | null = null;
 
     // Register the disconnection handler
-    db.onSocketDisconnect(handleSocketDisconnect);
+    const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect);
 
     db.requestMicrophonePermission()
 
     const fetchData = async () => {
         try {
+            const deviceType = await Device.getDeviceTypeAsync();
+            if (cancelled) return;
+
+            const detectedIsTablet =
+              deviceType === Device.DeviceType.TABLET;
+            setIsTablet(detectedIsTablet);
             
 
             let parsedTemplate = null;
@@ -646,6 +880,71 @@ useEffect(() => {
             
             setChosenTemplate(parsedTemplate)
 
+            let profileState = await db.fetchTemplateProfileState(parsedTemplate);
+            if (cancelled) return;
+
+            if (!detectedIsTablet) {
+              const defaultProfile = defaultProfileForPhone(
+                profileState.profiles
+              );
+
+              if (
+                defaultProfile &&
+                defaultProfile.id !== profileState.currentProfile?.id
+              ) {
+                await db.selectTemplateProfile(
+                  parsedTemplate,
+                  defaultProfile.id
+                );
+                profileState = await db.fetchTemplateProfileState(
+                  parsedTemplate
+                );
+                if (cancelled) return;
+              }
+            }
+
+            let restoredListenActive = getProfileListenActive(
+              profileState,
+              parsedTemplate
+            );
+
+            if (!detectedIsTablet && parsedTemplate) {
+              const cachedPhoneListenActive =
+                await readPhoneDefaultListenActive(parsedTemplate);
+              if (cancelled) return;
+
+              if (cachedPhoneListenActive === null) {
+                await savePhoneDefaultListenActive(
+                  parsedTemplate,
+                  restoredListenActive
+                );
+                if (cancelled) return;
+              } else {
+                restoredListenActive = parsedTemplate.listenDisabled
+                  ? false
+                  : cachedPhoneListenActive;
+
+                const defaultProfile = defaultProfileForPhone(
+                  profileState.profiles
+                );
+
+                void persistListenActive(
+                  parsedTemplate,
+                  restoredListenActive,
+                  true,
+                  defaultProfile?.id
+                ).catch(error => {
+                  console.warn(
+                    "Failed to sync phone listen state",
+                    error
+                  );
+                });
+              }
+            }
+
+            setTemplateProfiles(profileState.profiles);
+            setActiveTemplateProfile(profileState.currentProfile);
+
             const [
               inputs,
               savedInputGroups,
@@ -657,6 +956,7 @@ useEffect(() => {
               db.fetchTemplateInputGroupNames(parsedTemplate),
               db.fetchTemplateHiddenInputs(parsedTemplate),
             ]);
+            if (cancelled) return;
 
             const validInputPorts = new Set(
               inputs.map(input => Number(input.port))
@@ -668,36 +968,90 @@ useEffect(() => {
               );
 
             setSpecialGroupNames(savedInputGroupNames);
+            const profileAllInputsVolume =
+              profileState.allInputsVolume ??
+              profileState.currentProfile?.allInputsVolume ??
+              1;
+            const profileInputVolumes = profileState.inputVolumes ?? {};
+            const restoredInputVolumes: { [port: number]: number } = {};
+            inputs.forEach(input => {
+              restoredInputVolumes[input.port] =
+                profileInputVolumes[input.port] ??
+                profileAllInputsVolume;
+            });
+            setAllInputsSliderValue(profileAllInputsVolume);
+            setInputVolumes(restoredInputVolumes);
+            const profileIntercomVolumes = profileState.intercomVolumes ?? {};
+            const restoredIntercomVolumes: { [id: number]: number } = {};
+            (parsedTemplate?.intercomInfo ?? []).forEach((intercom: types.IntercomInfo) => {
+              restoredIntercomVolumes[intercom.id] =
+                profileIntercomVolumes[intercom.id] ??
+                1;
+            });
+            setIntercomVolumes(restoredIntercomVolumes);
             
 
             
 
+            joinedTemplate = parsedTemplate;
             await db.playerJoin(parsedTemplate)
-            const activatedInputs = parsedTemplate?.isTabMaster
-              ? []
-              : await db.fetchActivatedInputs();
+            if (cancelled) {
+              if (
+                joinedTemplate &&
+                db.templateInfo?.id === joinedTemplate.id
+              ) {
+                void db.playerExit(joinedTemplate);
+              }
+              return;
+            }
 
+            applyListenActiveState(restoredListenActive);
+            inputs.forEach(input => {
+              db.sendOnChangeVolume(
+                input.port,
+                restoredInputVolumes[input.port] ??
+                  profileAllInputsVolume
+              );
+            });
+            (parsedTemplate?.intercomInfo ?? []).forEach((intercom: types.IntercomInfo) => {
+              db.sendOnChangeIntercomVolume(
+                intercom.id,
+                intercom.port,
+                intercom.type,
+                restoredIntercomVolumes[intercom.id] ?? 1
+              );
+            });
             const activatedIntercoms = parsedTemplate?.isTabMaster
               ? []
-              : await db.fetchActivatedIntercoms();
+              : Array.isArray(profileState.activeIntercoms)
+                ? profileState.activeIntercoms
+                : await db.fetchActivatedIntercoms();
+            if (cancelled) return;
+
             setInputInfoList(inputs);
             setHiddenInputPorts(validHiddenInputPorts);
             setSpecialInputGroups(savedInputGroups);
             setIntercomInfoList(parsedTemplate.intercomInfo)
             setIntercomOmniList(db.addOmniToList(parsedTemplate.intercomInfo))
             setIntercomGroupList(db.addGroupToList(parsedTemplate.intercomInfo))
+            setInputToggleStates({});
+            setSpecialGroup1IsOn(false);
+            setSpecialGroup2IsOn(false);
 
             if (!parsedTemplate?.isTabMaster) {
-              toggleActivatedInputs(activatedInputs);
-              toggleActivatedIntercoms(activatedIntercoms);
+              toggleActivatedIntercoms(activatedIntercoms, parsedTemplate);
             }
 
             
 
         } catch (error) {
-            router.push("/template_selector")
+            if (!cancelled) {
+              router.dismissTo("/template_selector")
+            }
         } finally {
-          setLoading(false)
+          if (!cancelled) {
+            setLoading(false)
+          }
         }
     };
 
@@ -708,29 +1062,35 @@ useEffect(() => {
     db.chosenTemplateSetter = setChosenTemplate
     db.intercomOmniListSetter = setIntercomOmniList
     db.intercomGroupListSetter = setIntercomGroupList
-    db.timecodeSetter = (newTimecode: string) => {
-      timecodeRef.current = newTimecode;
+
+    return () => {
+      cancelled = true;
+      removeDisconnectHandler();
+
+      if (db.intercomInfoListSetter === setIntercomInfoList) {
+        db.intercomInfoListSetter = null;
+      }
+      if (db.inputInfoListSetter === setInputInfoList) {
+        db.inputInfoListSetter = null;
+      }
+      if (db.chosenTemplateSetter === setChosenTemplate) {
+        db.chosenTemplateSetter = null;
+      }
+      if (db.intercomOmniListSetter === setIntercomOmniList) {
+        db.intercomOmniListSetter = null;
+      }
+      if (db.intercomGroupListSetter === setIntercomGroupList) {
+        db.intercomGroupListSetter = null;
+      }
+
+      if (
+        joinedTemplate &&
+        db.templateInfo?.id === joinedTemplate.id
+      ) {
+        void db.playerExit(joinedTemplate);
+      }
     };
-
-    
   }, []);  // Empty dependency array to run only once when the component mounts
-
-useEffect(() => {
-  if (!isAppActive) return;
-
-  let animationFrameId: number;
-
-  const update = (time: number) => {
-    if (time - lastRenderTime.current >= throttleDuration) {
-      forceRender(n => n + 1);
-      lastRenderTime.current = time;
-    }
-    animationFrameId = requestAnimationFrame(update);
-  };
-
-  animationFrameId = requestAnimationFrame(update);
-  return () => cancelAnimationFrame(animationFrameId);
-}, [isAppActive]);
 
 
 const renderSpecialGroupButtonWithEditor = (groupKey: 'group1' | 'group2') => {
@@ -740,7 +1100,15 @@ const renderSpecialGroupButtonWithEditor = (groupKey: 'group1' | 'group2') => {
   const colors = isGroup1 ? SPECIAL_GROUP_COLORS.group1 : SPECIAL_GROUP_COLORS.group2
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        width: isEditing ? 150 : 80,
+        flexGrow: 0,
+        flexShrink: 0,
+      }}
+    >
       <Pressable
         style={[
           styles.generalStyles.button,
@@ -771,20 +1139,20 @@ const renderSpecialGroupButtonWithEditor = (groupKey: 'group1' | 'group2') => {
           style={{
             marginLeft: 6,
             height: 28,
-            minWidth: 70,
-            maxWidth: 90,
-            backgroundColor: '#2b2b2b',
+            minWidth: 56,
+            maxWidth: 64,
+            backgroundColor: styles.palette.control,
             borderWidth: 1,
-            borderColor: '#666',
-            borderRadius: 6,
+            borderColor: styles.palette.borderStrong,
+            borderRadius: 8,
             justifyContent: 'center',
             paddingHorizontal: 8,
           }}
         >
           <Text
             style={{
-              color: '#ddd',
-              fontSize: 11,
+              color: styles.palette.text,
+              fontSize: 10,
               textAlign: 'center',
             }}
             numberOfLines={1}
@@ -1166,57 +1534,337 @@ const clearAllInputs = () => {
   });
 };
 
-  const toggleActivatedIntercoms = (activatedIntercoms: types.IntercomInfo[]) => {
-    
+  const toggleActivatedIntercoms = (
+    activatedIntercoms: Array<{ id: number; port: number; type: string }>,
+    templateInfo: types.TemplateInfo | undefined = chosenTemplate
+  ) => {
+    if (!templateInfo) return;
+
+    const nextStates: {
+      [id: number]: {
+        toggled: boolean;
+        activated: boolean;
+      };
+    } = {};
 
     activatedIntercoms.forEach(({ id, port, type }) => {
-      setIntercomToggleStates(prev => {
-        const isOn = prev[id]?.toggled ?? false;
-        
-        const newState = !isOn;
+      nextStates[id] = {
+        toggled: true,
+        activated: true,
+      };
 
-        return {
-          ...prev,
-          [id]: {
-            toggled: newState,
-            activated: newState,
-          },
-        };
-      });
-
-      const isCurrentlyOn = intercomToggleStates[id]?.toggled ?? false;
       if (type !== 'output'){
-        if (isCurrentlyOn) {
-          db.sendOutputOff(chosenTemplate as types.TemplateInfo, port);
-        } else {
-          db.sendOutputOn(chosenTemplate as types.TemplateInfo, port);
-        }
+        db.sendOutputOn(templateInfo, port);
       }
       else{
-        if (isCurrentlyOn) {
-          db.sendInputOff(chosenTemplate as types.TemplateInfo, port, true, false);
-        } else {
-          db.sendInputOn(chosenTemplate as types.TemplateInfo, port, true);
-        }
+        db.sendInputOn(templateInfo, port, true);
       }
-    })
+    });
+
+    setIntercomToggleStates(nextStates);
+    setOmniIsOn(false);
+    setGroupIsOn(false);
   };
 
-  const toggleActivatedInputs = (activatedInputs: types.InputInfo[]) => {
-    
+  const toggleActivatedInputs = (
+    activatedInputs: Array<{ port: number }>,
+    templateInfo: types.TemplateInfo | undefined = chosenTemplate
+  ) => {
+    if (!templateInfo) return;
 
+    const nextStates: { [port: number]: boolean } = {};
     activatedInputs.forEach(({ port }) => {
-      setInputToggleStates(prev => ({
-        ...prev,
-        [port]: !prev[port],
-      }));
-    
-      if (inputToggleStates[port]) {
-        db.sendInputOff(chosenTemplate as types.TemplateInfo, port, false, false);
+      nextStates[port] = true;
+      db.sendInputOn(templateInfo, port, false);
+    });
+
+    setInputToggleStates(nextStates);
+    setSpecialGroup1IsOn(false);
+    setSpecialGroup2IsOn(false);
+  };
+
+  const applyProfileVolumeState = (
+    inputs: types.InputInfo[],
+    profileState: types.TemplateProfilePayload
+  ) => {
+    const profileAllInputsVolume =
+      profileState.allInputsVolume ??
+      profileState.currentProfile?.allInputsVolume ??
+      1;
+    const profileInputVolumes = profileState.inputVolumes ?? {};
+    const restoredInputVolumes: { [port: number]: number } = {};
+
+    inputs.forEach(input => {
+      restoredInputVolumes[input.port] =
+        profileInputVolumes[input.port] ??
+        profileAllInputsVolume;
+    });
+
+    setAllInputsSliderValue(profileAllInputsVolume);
+    setInputVolumes(restoredInputVolumes);
+
+    inputs.forEach(input => {
+      db.sendOnChangeVolume(
+        input.port,
+        restoredInputVolumes[input.port] ??
+          profileAllInputsVolume
+      );
+    });
+  };
+
+  const applyProfileIntercomVolumeState = (
+    intercoms: types.IntercomInfo[],
+    profileState: types.TemplateProfilePayload
+  ) => {
+    const profileIntercomVolumes = profileState.intercomVolumes ?? {};
+    const restoredIntercomVolumes: { [id: number]: number } = {};
+
+    intercoms.forEach(intercom => {
+      restoredIntercomVolumes[intercom.id] =
+        profileIntercomVolumes[intercom.id] ??
+        1;
+    });
+
+    setIntercomVolumes(restoredIntercomVolumes);
+
+    intercoms.forEach(intercom => {
+      db.sendOnChangeIntercomVolume(
+        intercom.id,
+        intercom.port,
+        intercom.type,
+        restoredIntercomVolumes[intercom.id] ?? 1
+      );
+    });
+  };
+
+  const clearRuntimeForProfileSwitch = (
+    templateInfo: types.TemplateInfo
+  ) => {
+    inputInfoList.forEach(input => {
+      db.sendInputOff(
+        templateInfo,
+        input.port,
+        false,
+        false,
+        undefined,
+        true
+      );
+    });
+
+    intercomInfoList.forEach(intercom => {
+      if (intercom.type !== "output") {
+        db.sendOutputOff(
+          templateInfo,
+          intercom.port,
+          true
+        );
       } else {
-        db.sendInputOn(chosenTemplate as types.TemplateInfo, port, false);
+        db.sendInputOff(
+          templateInfo,
+          intercom.port,
+          true,
+          false,
+          undefined,
+          true
+        );
       }
-    })
+    });
+
+    setInputToggleStates({});
+    setIntercomToggleStates({});
+    setSpecialGroup1IsOn(false);
+    setSpecialGroup2IsOn(false);
+    setOmniIsOn(false);
+    setGroupIsOn(false);
+  };
+
+  const reloadActiveProfileState = async (
+    templateInfo: types.TemplateInfo
+  ) => {
+    const profileState = await db.fetchTemplateProfileState(templateInfo);
+    setTemplateProfiles(profileState.profiles);
+    setActiveTemplateProfile(profileState.currentProfile);
+
+    const [
+      inputs,
+      savedInputGroups,
+      savedInputGroupNames,
+      savedHiddenInputPorts,
+    ] = await Promise.all([
+      db.fetchInputs(templateInfo),
+      db.fetchTemplateInputGroups(templateInfo),
+      db.fetchTemplateInputGroupNames(templateInfo),
+      db.fetchTemplateHiddenInputs(templateInfo),
+    ]);
+
+    const validInputPorts = new Set(
+      inputs.map(input => Number(input.port))
+    );
+    const validHiddenInputPorts =
+      savedHiddenInputPorts.filter(port =>
+        validInputPorts.has(Number(port))
+      );
+
+    setInputInfoList(inputs);
+    setHiddenInputPorts(validHiddenInputPorts);
+    setSpecialInputGroups(savedInputGroups);
+    setSpecialGroupNames(savedInputGroupNames);
+    applyProfileVolumeState(inputs, profileState);
+    applyProfileIntercomVolumeState(
+      templateInfo.intercomInfo ?? [],
+      profileState
+    );
+    applyListenActiveState(
+      getProfileListenActive(profileState, templateInfo)
+    );
+
+    if (templateInfo.isTabMaster) {
+      setInputToggleStates({});
+      setIntercomToggleStates({});
+      return;
+    }
+
+    setInputToggleStates({});
+    setSpecialGroup1IsOn(false);
+    setSpecialGroup2IsOn(false);
+
+    const activatedIntercoms = Array.isArray(profileState.activeIntercoms)
+      ? profileState.activeIntercoms
+      : await db.fetchActivatedIntercoms();
+    toggleActivatedIntercoms(activatedIntercoms, templateInfo);
+  };
+
+  const handleSelectProfile = async (
+    profile: types.TemplateProfile
+  ) => {
+    if (!chosenTemplate || profileBusy || !isTablet) return;
+
+    setProfileBusy(true);
+    setProfileActionError(null);
+
+    try {
+      clearRuntimeForProfileSwitch(chosenTemplate);
+      await db.selectTemplateProfile(chosenTemplate, profile.id);
+      await reloadActiveProfileState(chosenTemplate);
+      setProfileModalVisible(false);
+    } catch (error: any) {
+      setProfileActionError(error?.message ?? "Could not switch profile");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleCreateProfile = async () => {
+    if (!chosenTemplate || profileBusy || !isTablet) return;
+
+    if (templateProfiles.length >= PROFILE_LIMIT) {
+      setProfileActionError(`A template can have a maximum of ${PROFILE_LIMIT} profiles`);
+      return;
+    }
+
+    const cleanName = newProfileName.trim();
+    if (!cleanName) {
+      setProfileActionError("Profile name is required");
+      return;
+    }
+
+    setProfileBusy(true);
+    setProfileActionError(null);
+
+    try {
+      await db.createTemplateProfile(chosenTemplate, cleanName);
+      setNewProfileName("");
+      await reloadActiveProfileState(chosenTemplate);
+    } catch (error: any) {
+      setProfileActionError(error?.message ?? "Could not create profile");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleStartRenameProfile = (
+    profile: types.TemplateProfile
+  ) => {
+    setRenamingProfileId(profile.id);
+    setRenameProfileName(profile.name);
+    setProfileActionError(null);
+  };
+
+  const handleRenameProfile = async () => {
+    if (
+      !chosenTemplate ||
+      profileBusy ||
+      renamingProfileId == null
+    ) return;
+
+    const cleanName = renameProfileName.trim();
+    if (!cleanName) {
+      setProfileActionError("Profile name is required");
+      return;
+    }
+
+    setProfileBusy(true);
+    setProfileActionError(null);
+
+    try {
+      await db.renameTemplateProfile(
+        chosenTemplate,
+        renamingProfileId,
+        cleanName
+      );
+      setRenamingProfileId(null);
+      setRenameProfileName("");
+      await reloadActiveProfileState(chosenTemplate);
+    } catch (error: any) {
+      setProfileActionError(error?.message ?? "Could not rename profile");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleDeleteProfile = (
+    profile: types.TemplateProfile
+  ) => {
+    if (!chosenTemplate || profileBusy) return;
+
+    Alert.alert(
+      "Delete profile",
+      `Delete "${profile.name}"?`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            if (!chosenTemplate) return;
+
+            setProfileBusy(true);
+            setProfileActionError(null);
+
+            try {
+              if (profile.id === activeTemplateProfile?.id) {
+                clearRuntimeForProfileSwitch(chosenTemplate);
+              }
+
+              await db.deleteTemplateProfile(
+                chosenTemplate,
+                profile.id
+              );
+              setRenamingProfileId(null);
+              setRenameProfileName("");
+              await reloadActiveProfileState(chosenTemplate);
+            } catch (error: any) {
+              setProfileActionError(error?.message ?? "Could not delete profile");
+            } finally {
+              setProfileBusy(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleInputToggle = (port: number) => {
@@ -1363,20 +2011,429 @@ useEffect(() => {
 
   
   const handleToggleMute = () => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      if (next) { 
-        db.isMuted = false
-        db.playRemoteStream()
-        console.log('Now Listening');
-      } else {
-        db.isMuted = true
-        db.playRemoteStream()
-        console.log('Muted');
-      }
-      return next;
-    });
+    if (listenDisabled) return;
+
+    const next = !listenActiveRef.current;
+    applyListenActiveState(next);
+    console.log(next ? 'Now Listening' : 'Muted');
+
+    if (chosenTemplate) {
+      const profileId =
+        activeTemplateProfile?.id ??
+        (!isTablet
+          ? defaultProfileForPhone(templateProfiles)?.id
+          : undefined);
+
+      void persistListenActive(
+        chosenTemplate,
+        next,
+        !isTablet,
+        profileId
+      ).catch(error => {
+        console.warn(
+          "Failed to save listen state",
+          error
+        );
+      });
+    }
   };
+
+const renderProfileButton = (
+  extraStyle: any = {},
+  textSize = 12
+) => (
+  <Pressable
+    style={({ pressed }) => [
+      styles.generalStyles.button,
+      pressed && styles.generalStyles.buttonPressed,
+      {
+        justifyContent: "center",
+        alignItems: "center",
+        paddingHorizontal: 6,
+        paddingVertical: 4,
+      },
+      extraStyle,
+    ]}
+    onPress={() => {
+      setProfileActionError(null);
+      setProfileModalVisible(true);
+    }}
+  >
+    <Text
+      style={[
+        styles.generalStyles.text,
+        { fontSize: textSize, textAlign: "center" },
+      ]}
+      numberOfLines={1}
+    >
+      Profile
+    </Text>
+    <Text
+      style={[
+        styles.generalStyles.text,
+        { fontSize: Math.max(textSize - 2, 9), textAlign: "center", width: "100%" },
+      ]}
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {activeTemplateProfile?.name ?? "Default"}
+    </Text>
+  </Pressable>
+);
+
+const renderProfileModal = () => {
+  const canCreateProfile =
+    isTablet &&
+    templateProfiles.length < PROFILE_LIMIT;
+
+  return (
+    <Modal
+      visible={profileModalVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setProfileModalVisible(false)}
+      supportedOrientations={["landscape", "landscape-left", "landscape-right"]}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.modalStyles.overlay}
+      >
+        <View
+          style={{
+            width: 600,
+            maxWidth: "92%",
+            maxHeight: "88%",
+            backgroundColor: styles.palette.panelRaised,
+            borderWidth: 1,
+            borderColor: styles.palette.borderStrong,
+            borderRadius: 8,
+            padding: 16,
+          }}
+        >
+          <Text style={styles.modalStyles.title}>
+            Template Profiles
+          </Text>
+          <Text
+            style={[
+              styles.generalStyles.text,
+              {
+                fontSize: 12,
+                color: styles.palette.textMuted,
+                textAlign: "center",
+                marginBottom: 10,
+              },
+            ]}
+          >
+            {templateProfiles.length}/{PROFILE_LIMIT}
+          </Text>
+
+          <ScrollView
+            style={{ maxHeight: 300 }}
+            contentContainerStyle={{ gap: 8 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {templateProfiles.map(profile => {
+              const isActive =
+                profile.id === activeTemplateProfile?.id;
+              const isDefault =
+                profile.name.trim().toLowerCase() === "default";
+              const isRenaming =
+                profile.id === renamingProfileId;
+
+              return (
+                <View
+                  key={profile.id}
+                  style={{
+                    backgroundColor: isActive
+                      ? styles.palette.cyanBase
+                      : styles.palette.control,
+                    borderWidth: 1,
+                    borderColor: isActive
+                      ? styles.palette.cyan
+                      : styles.palette.borderStrong,
+                    borderRadius: 8,
+                    padding: 8,
+                    opacity: profileBusy && !isActive ? 0.65 : 1,
+                  }}
+                >
+                  {isRenaming ? (
+                    <View style={{ gap: 8 }}>
+                      <TextInput
+                        value={renameProfileName}
+                        onChangeText={(text) => {
+                          setRenameProfileName(text);
+                          setProfileActionError(null);
+                        }}
+                        placeholder="Profile name"
+                        placeholderTextColor={styles.palette.textMuted}
+                        style={{
+                          height: 40,
+                          backgroundColor: styles.palette.appBg,
+                          color: styles.palette.text,
+                          borderWidth: 1,
+                          borderColor: styles.palette.borderStrong,
+                          borderRadius: 8,
+                          paddingHorizontal: 12,
+                          fontSize: 15,
+                        }}
+                        returnKeyType="done"
+                        onSubmitEditing={handleRenameProfile}
+                      />
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          gap: 8,
+                        }}
+                      >
+                        <Pressable
+                          disabled={profileBusy}
+                          onPress={handleRenameProfile}
+                          style={[
+                            styles.generalStyles.button,
+                            {
+                              flex: 1,
+                              minHeight: 38,
+                              justifyContent: "center",
+                              alignItems: "center",
+                            },
+                          ]}
+                        >
+                          <Text style={styles.generalStyles.text}>
+                            Save
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          disabled={profileBusy}
+                          onPress={() => {
+                            setRenamingProfileId(null);
+                            setRenameProfileName("");
+                            setProfileActionError(null);
+                          }}
+                          style={[
+                            styles.generalStyles.button,
+                            {
+                              flex: 1,
+                              minHeight: 38,
+                              justifyContent: "center",
+                              alignItems: "center",
+                            },
+                          ]}
+                        >
+                          <Text style={styles.generalStyles.text}>
+                            Cancel
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <Pressable
+                        disabled={profileBusy || isActive}
+                        onPress={() => handleSelectProfile(profile)}
+                        style={{
+                          flex: 1,
+                          minHeight: 40,
+                          justifyContent: "center",
+                          paddingHorizontal: 8,
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.generalStyles.text,
+                            {
+                              fontSize: 14,
+                              textAlign: "left",
+                            },
+                          ]}
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
+                        >
+                          {profile.name}
+                        </Text>
+                        {isActive && (
+                          <Text
+                            style={[
+                              styles.generalStyles.text,
+                              {
+                                fontSize: 10,
+                                color: styles.palette.textMuted,
+                              },
+                            ]}
+                          >
+                            Active
+                          </Text>
+                        )}
+                      </Pressable>
+
+                      {!isDefault && (
+                        <>
+                          <Pressable
+                            disabled={profileBusy}
+                            onPress={() => handleStartRenameProfile(profile)}
+                            style={[
+                              styles.generalStyles.button,
+                              {
+                                width: 82,
+                                minHeight: 38,
+                                justifyContent: "center",
+                                alignItems: "center",
+                                paddingHorizontal: 4,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.generalStyles.text,
+                                { fontSize: 11 },
+                              ]}
+                            >
+                              Rename
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            disabled={profileBusy}
+                            onPress={() => handleDeleteProfile(profile)}
+                            style={[
+                              styles.generalStyles.button,
+                              {
+                                width: 72,
+                                minHeight: 38,
+                                justifyContent: "center",
+                                alignItems: "center",
+                                paddingHorizontal: 4,
+                                backgroundColor: styles.palette.danger,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.generalStyles.text,
+                                { fontSize: 11 },
+                              ]}
+                            >
+                              Delete
+                            </Text>
+                          </Pressable>
+                        </>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          <View
+            style={{
+              height: 1,
+              backgroundColor: styles.palette.borderStrong,
+              marginVertical: 12,
+              opacity: 0.65,
+            }}
+          />
+
+          <TextInput
+            editable={canCreateProfile && !profileBusy}
+            value={newProfileName}
+            onChangeText={(text) => {
+              setNewProfileName(text);
+              setProfileActionError(null);
+            }}
+            placeholder={
+              canCreateProfile
+                ? "New profile name"
+                : "8 profile limit reached"
+            }
+            placeholderTextColor={styles.palette.textMuted}
+            style={{
+              height: 42,
+              backgroundColor: styles.palette.appBg,
+              color: styles.palette.text,
+              borderWidth: 1,
+              borderColor: styles.palette.borderStrong,
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              fontSize: 15,
+              opacity: canCreateProfile ? 1 : 0.55,
+            }}
+            returnKeyType="done"
+            onSubmitEditing={
+              canCreateProfile ? handleCreateProfile : undefined
+            }
+          />
+
+          {profileActionError && (
+            <Text
+              style={{
+                color: styles.palette.warning,
+                fontSize: 12,
+                marginTop: 8,
+                textAlign: "center",
+              }}
+            >
+              {profileActionError}
+            </Text>
+          )}
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 10,
+              marginTop: 12,
+            }}
+          >
+            <Pressable
+              disabled={profileBusy || !canCreateProfile}
+              onPress={handleCreateProfile}
+              style={[
+                styles.generalStyles.button,
+                {
+                  flex: 1,
+                  minHeight: 42,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  opacity:
+                    profileBusy || !canCreateProfile ? 0.55 : 1,
+                },
+              ]}
+            >
+              <Text style={styles.generalStyles.text}>
+                {profileBusy ? "Saving..." : "Create"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              disabled={profileBusy}
+              onPress={() => {
+                setRenamingProfileId(null);
+                setRenameProfileName("");
+                setProfileModalVisible(false);
+              }}
+              style={[
+                styles.generalStyles.button,
+                {
+                  flex: 1,
+                  minHeight: 42,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  opacity: profileBusy ? 0.6 : 1,
+                },
+              ]}
+            >
+              <Text style={styles.generalStyles.text}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
 
 const renderTabMasterFooter = () => (
   <View
@@ -1446,10 +2503,10 @@ const renderTabMasterFooter = () => (
     styles.generalStyles.timecode,
     {
       marginRight: 12,
-      height: 60,
-      width: 120,
-      maxWidth: 120,
-      minWidth: 120,
+      height: 68,
+      width: 170,
+      maxWidth: 170,
+      minWidth: 170,
       flexShrink: 0,
       justifyContent: "center",
       alignItems: "center",
@@ -1466,16 +2523,23 @@ const renderTabMasterFooter = () => (
           {chosenTemplate?.name || "Name Unknown"}
         </Text>
 
-        <Text
+        <TimecodeValue
           style={[
             styles.generalStyles.text,
-            { fontSize: 14, textAlign: "center", width: "100%" },
+            { fontSize: 18, textAlign: "center", width: "100%" },
           ]}
-        >
-          {timecodeRef.current}
-        </Text>
+        />
       </View>
 
+
+      {isTablet && renderProfileButton({
+        marginRight: 12,
+        height: 60,
+        width: 120,
+        maxWidth: 120,
+        minWidth: 120,
+        flexShrink: 0,
+      }, 12)}
 
       {/* CLEAR ALL */}
       <Pressable
@@ -1508,6 +2572,17 @@ const renderTabMasterFooter = () => (
   </View>
 );
 
+  if (!isAppActive || !isFocused) {
+    return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+        <View style={{ ...styles.generalStyles.container, alignItems: "center", justifyContent: "center" }}>
+          <Text style={styles.generalStyles.text}>Paused</Text>
+        </View>
+      </SafeAreaView>
+    </GestureHandlerRootView>
+    );
+  }
 
   if (loading){
     return (
@@ -1516,24 +2591,13 @@ const renderTabMasterFooter = () => (
 
         <View style={{...styles.generalStyles.container, alignContent: "center", justifyContent: "center", alignItems: "center"}}>
           <View style={{alignContent: "center", justifyContent: "center", alignItems: "center"}}>
-            <Text style={{fontSize: 30}}>Loading...</Text>
+            <Text style={{...styles.generalStyles.text, fontSize: 30}}>Loading...</Text>
           </View>
         </View>
       </SafeAreaView>
     </GestureHandlerRootView>
     )
   }
-  if (!isAppActive) {
-      return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView style={styles.generalStyles.safeContainer}>
-        <View style={{ ...styles.generalStyles.container, alignItems: "center", justifyContent: "center" }}>
-          <Text style={styles.generalStyles.text}>Paused</Text>
-        </View>
-      </SafeAreaView>
-    </GestureHandlerRootView>
-  );
-}
   if (isTablet) return (
   <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={styles.generalStyles.safeContainer}>
@@ -1595,6 +2659,8 @@ const renderTabMasterFooter = () => (
               onToggleLatch={handleOutputToggleLatch}
               onToggleUnlatchPress={handleOutputToggleUnlatchPress}
               onToggleUnlatchRelease={handleOutputToggleUnlatchRelease}
+              intercomVolumes={intercomVolumes}
+              onIntercomVolumeChange={handleIntercomVolumeChange}
               isAppActive={isAppActive}
             />
           )}
@@ -1617,7 +2683,7 @@ const renderTabMasterFooter = () => (
   style={{
     alignItems: 'center',
     justifyContent: 'center',
-    width: 200,
+    width: 178,
     flexGrow: 0,
     flexShrink: 0,
   }}
@@ -1626,7 +2692,7 @@ const renderTabMasterFooter = () => (
     Intercom
   </Text>
 
-  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 <Pressable
     style={[
       styles.generalStyles.button,
@@ -1682,8 +2748,8 @@ const renderTabMasterFooter = () => (
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: '#666',
-      marginHorizontal: 8,
+      backgroundColor: styles.palette.borderStrong,
+      marginHorizontal: 3,
       opacity: 0.6,
     }}
   />
@@ -1691,7 +2757,7 @@ const renderTabMasterFooter = () => (
   style={{
     alignItems: 'center',
     justifyContent: 'center',
-    width: 225,
+    width: editingSpecialGroup ? 246 : 170,
     flexGrow: 0,
     flexShrink: 0,
   }}
@@ -1702,7 +2768,7 @@ const renderTabMasterFooter = () => (
 
     {/* Input groups */}
 
-  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
     {renderSpecialGroupButtonWithEditor('group1')}
     {renderSpecialGroupButtonWithEditor('group2')}
     </View>
@@ -1711,8 +2777,8 @@ const renderTabMasterFooter = () => (
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: '#666',
-      marginHorizontal: 4,
+      backgroundColor: styles.palette.borderStrong,
+      marginHorizontal: 2,
       opacity: 0.6,
     }}
   />
@@ -1722,21 +2788,35 @@ const renderTabMasterFooter = () => (
     flexDirection: 'row',
     alignItems: 'center',
     height: 54,
+    width: inputReorderMode ? 134 : 66,
     flexGrow: 0,
     flexShrink: 0,
-    gap: 6,
+    gap: 4,
   }}
 >
+  <View
+    style={{
+      width: inputReorderMode ? 128 : 58,
+      height: 50,
+      justifyContent: 'center',
+      flexDirection: inputReorderMode ? 'row' : 'column',
+      alignItems: 'center',
+      gap: inputReorderMode ? 4 : 0,
+    }}
+  >
   <Pressable
     style={({ pressed }) => [
       styles.generalStyles.button,
       pressed && styles.generalStyles.buttonPressed,
       {
-        height: 44,
-        minWidth: 70,
-        maxWidth: 70,
+        flex: 0,
+        height: inputReorderMode ? 38 : 44,
+        minWidth: inputReorderMode ? 52 : 58,
+        maxWidth: inputReorderMode ? 52 : 58,
+        width: inputReorderMode ? 52 : 58,
         justifyContent: 'center',
         alignItems: 'center',
+        paddingHorizontal: 3,
         paddingVertical: 0,
       },
     ]}
@@ -1755,7 +2835,7 @@ const renderTabMasterFooter = () => (
       }
     }}
   >
-    <Text style={styles.generalStyles.text}>
+    <Text style={[styles.generalStyles.text, { fontSize: inputReorderMode ? 11 : 12 }]}>
       {inputReorderMode ? "Done" : "Edit"}
     </Text>
   </Pressable>
@@ -1765,19 +2845,21 @@ const renderTabMasterFooter = () => (
       style={[
         styles.generalStyles.button,
         {
-          height: 34,
-          minWidth: 58,
-          maxWidth: 58,
+          flex: 0,
+          height: 38,
+          minWidth: 72,
+          maxWidth: 72,
+          width: 72,
           justifyContent: 'center',
           alignItems: 'center',
-          paddingHorizontal: 4,
+          paddingHorizontal: 2,
           backgroundColor: inputDeleteMode
-            ? '#ff3b30'
-            : '#8b1e1e',
+            ? styles.palette.dangerActive
+            : styles.palette.danger,
           borderWidth: inputDeleteMode ? 2 : 1,
           borderColor: inputDeleteMode
-            ? '#ffffff'
-            : '#b84444',
+            ? styles.palette.text
+            : 'rgba(255,255,255,0.2)',
         },
       ]}
       onPress={() => {
@@ -1788,21 +2870,22 @@ const renderTabMasterFooter = () => (
         style={[
           styles.generalStyles.text,
           {
-            fontSize: 11,
+            fontSize: 10,
             textAlign: 'center',
           },
         ]}
       >
-        Delete
+        Hide/show
       </Text>
-    </Pressable>
+      </Pressable>
   )}
+  </View>
 
   <View
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: '#666',
+      backgroundColor: styles.palette.borderStrong,
       opacity: 0.6,
     }}
   />
@@ -1814,11 +2897,12 @@ const renderTabMasterFooter = () => (
     flexDirection: 'row',
     alignItems: 'center',
     height: 54,
+    flex: 1,
     flexGrow: 1,
-    justifyContent: 'space-evenly',
-
-    // Make room for the Delete button while input editing is active.
-    marginLeft: inputReorderMode ? 70 : 0,
+    flexShrink: 1,
+    justifyContent: 'space-between',
+    minWidth: 0,
+    gap: 4,
   }}
 >
 
@@ -1826,41 +2910,56 @@ const renderTabMasterFooter = () => (
     style={[
       styles.generalStyles.timecode,
       {
-        width: 120,
-        maxWidth: 120,
-        minWidth: 120,
-        paddingHorizontal: 8,
+        flex: 0,
+        width: 144,
+        maxWidth: 144,
+        minWidth: 132,
+        height: 58,
+        paddingHorizontal: 6,
       },
     ]}
   >
-    <Text style={styles.generalStyles.text}>{chosenTemplate?.name || 'Name Unknown'}</Text>
-    <Text style={{ ...styles.generalStyles.text, width: "100%" }}>{timecodeRef.current}</Text>
+    <Text style={[styles.generalStyles.text, { fontSize: 13 }]} numberOfLines={1}>{chosenTemplate?.name || 'Name Unknown'}</Text>
+    <TimecodeValue style={{ ...styles.generalStyles.text, width: "100%", fontSize: 16 }} numberOfLines={1} />
   </View>
 
   <Pressable
     style={[
       styles.generalStyles.button,
-      styles.getInfoViewPressableStyleInput(isMuted),
-      { width: 120, maxWidth: 120, minWidth: 120, justifyContent: 'center', alignItems: 'center', }
+      !listenDisabled && styles.getInfoViewPressableStyleInput(isMuted),
+      listenDisabled && { backgroundColor: styles.palette.controlSoft },
+      { flex: 0, width: 92, maxWidth: 92, minWidth: 82, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 }
     ]}
-    onPress={handleToggleMute}
+    onPress={listenDisabled ? undefined : handleToggleMute}
     onLongPress={() => setListenVolumeModalVisible(true)}
   >
-    <Text style={styles.generalStyles.text}>Listen</Text>
-    <Text style={{ ...styles.generalStyles.text }}>
+    {!listenDisabled && (
+      <Text style={[styles.generalStyles.text, { fontSize: 11 }]}>Listen</Text>
+    )}
+    <Text style={{ ...styles.generalStyles.text, fontSize: 10 }}>
       {(allInputsSliderValue * 100).toFixed(0)}%
     </Text>
   </Pressable>
+
+  {renderProfileButton({
+    flex: 0,
+    width: 82,
+    maxWidth: 82,
+    minWidth: 74,
+    height: 54,
+    flexShrink: 0,
+    paddingHorizontal: 3,
+  }, 10)}
 
   <Pressable
     style={({ pressed }) => [
       styles.generalStyles.button,
       pressed && styles.generalStyles.buttonPressed,
-      { width: 100, maxWidth: 100, minWidth: 100,justifyContent: 'center', alignItems: 'center' },
+      { flex: 0, width: 76, maxWidth: 76, minWidth: 68, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
     ]}
     onPress={clearAllInputs}
   >
-    <Text style={styles.generalStyles.text}>Clear all</Text>
+    <Text style={[styles.generalStyles.text, { fontSize: 11 }]}>Clear all</Text>
   </Pressable>
 </View>
             </View>
@@ -1879,26 +2978,19 @@ const renderTabMasterFooter = () => (
         >
           <View
             style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.5)",
-              justifyContent: "center",
-              alignItems: "center",
+              ...styles.modalStyles.overlay,
             }}
           >
             <View
               style={{
-                width: "40%",
-                padding: 20,
-                backgroundColor: "#fff",
-                borderRadius: 10,
-                alignItems: "center",
+                ...styles.modalStyles.compactContent,
               }}
             >
-              <Text style={{ marginBottom: 10, fontSize: 16, fontWeight: "bold" }}>
+              <Text style={styles.modalStyles.title}>
                 All Inputs Volume: {(allInputsSliderValue * 100).toFixed(0)}%
               </Text>
               <Slider
-                style={{ width: "100%", height: 40, marginBottom: 20 }}
+                style={styles.modalStyles.slider}
                 minimumValue={0}
                 maximumValue={2}
                 value={allInputsSliderValue}
@@ -1927,23 +3019,23 @@ const renderTabMasterFooter = () => (
               flex: 1,
               justifyContent: 'flex-start',
               alignItems: 'center',
-              backgroundColor: 'rgba(0,0,0,0.25)',
+              backgroundColor: 'rgba(0,0,0,0.68)',
             }}
           >
             <View
               style={{
                 width: '88%',
-                backgroundColor: '#222',
-                borderRadius: 12,
+                backgroundColor: styles.palette.panelRaised,
+                borderRadius: 8,
                 padding: 16,
                 marginBottom: Platform.OS === 'ios' ? 12 : 24,
                 borderWidth: 1,
-                borderColor: '#555',
+                borderColor: styles.palette.borderStrong,
               }}
             >
               <Text
                 style={{
-                  color: 'white',
+                  color: styles.palette.text,
                   fontSize: 16,
                   marginBottom: 10,
                   textAlign: 'center',
@@ -1962,13 +3054,13 @@ const renderTabMasterFooter = () => (
                   }))
                 }}
                 placeholder="Group name"
-                placeholderTextColor="#999"
+                placeholderTextColor={styles.palette.textMuted}
                 style={{
                   height: 44,
-                  backgroundColor: '#111',
-                  color: 'white',
+                  backgroundColor: styles.palette.appBg,
+                  color: styles.palette.text,
                   borderWidth: 1,
-                  borderColor: '#666',
+                  borderColor: styles.palette.borderStrong,
                   borderRadius: 8,
                   paddingHorizontal: 12,
                   fontSize: 16,
@@ -2002,13 +3094,13 @@ const renderTabMasterFooter = () => (
                   style={{
                     flex: 1,
                     marginRight: 6,
-                    backgroundColor: '#444',
+                    backgroundColor: styles.palette.control,
                     borderRadius: 8,
                     paddingVertical: 10,
                     alignItems: 'center',
                   }}
                 >
-                  <Text style={{ color: 'white', fontSize: 15 }}>Done</Text>
+                  <Text style={{ color: styles.palette.text, fontSize: 15 }}>Done</Text>
                 </Pressable>
 
                 <Pressable
@@ -2023,18 +3115,20 @@ const renderTabMasterFooter = () => (
                   style={{
                     flex: 1,
                     marginLeft: 6,
-                    backgroundColor: '#555',
+                    backgroundColor: styles.palette.controlPressed,
                     borderRadius: 8,
                     paddingVertical: 10,
                     alignItems: 'center',
                   }}
                 >
-                  <Text style={{ color: 'white', fontSize: 15 }}>Reset name</Text>
+                  <Text style={{ color: styles.palette.text, fontSize: 15 }}>Reset name</Text>
                 </Pressable>
               </View>
             </View>
           </View>
         </Modal>
+
+        {renderProfileModal()}
 
       </SafeAreaView>
     </GestureHandlerRootView>
@@ -2115,9 +3209,13 @@ const renderTabMasterFooter = () => (
                             flexDirection: "row",
                             alignItems: "center",
                             justifyContent: "center",
-                            width: inputReorderMode ? "18%" : "10%",
-                            maxWidth: inputReorderMode ? "18%" : "10%",
-                            height: "70%",
+                            width: inputReorderMode ? 128 : 54,
+                            maxWidth: inputReorderMode ? 128 : 54,
+                            minWidth: inputReorderMode ? 128 : 54,
+                            height: PHONE_FOOTER_BUTTON_HEIGHT,
+                            marginLeft: -6,
+                            marginRight: 6,
+                            flexShrink: 0,
                           }}
                         >
                           <Pressable
@@ -2125,11 +3223,15 @@ const renderTabMasterFooter = () => (
                               styles.generalStyles.button,
                               pressed && styles.generalStyles.buttonPressed,
                               {
-                                height: inputReorderMode ? "70%" : "50%",
-                                flex: 1,
+                                height: "100%",
+                                flex: 0,
+                                width: inputReorderMode ? 48 : 54,
+                                maxWidth: inputReorderMode ? 48 : 54,
+                                minWidth: inputReorderMode ? 48 : 54,
                                 justifyContent: "center",
                                 alignItems: "center",
-                                paddingHorizontal: 2,
+                                paddingHorizontal: 4,
+                                paddingVertical: 0,
                               },
                             ]}
                             delayLongPress={500}
@@ -2150,8 +3252,9 @@ const renderTabMasterFooter = () => (
                             <Text
                               style={[
                                 styles.generalStyles.text,
-                                { fontSize: 11 },
+                                { fontSize: inputReorderMode ? PHONE_FOOTER_SMALL_TEXT_SIZE : PHONE_FOOTER_TEXT_SIZE },
                               ]}
+                              numberOfLines={1}
                             >
                               {inputReorderMode ? "Done" : "Edit"}
                             </Text>
@@ -2162,20 +3265,22 @@ const renderTabMasterFooter = () => (
                               style={[
                                 styles.generalStyles.button,
                                 {
-                                  height: "55%",
-                                  width: 45,
-                                  maxWidth: 45,
+                                  flex: 0,
+                                  height: "100%",
+                                  width: 72,
+                                  maxWidth: 72,
+                                  minWidth: 72,
                                   marginLeft: 4,
                                   justifyContent: "center",
                                   alignItems: "center",
                                   paddingHorizontal: 2,
                                   backgroundColor: inputDeleteMode
-                                    ? "#ff3b30"
-                                    : "#8b1e1e",
+                                    ? styles.palette.dangerActive
+                                    : styles.palette.danger,
                                   borderWidth: inputDeleteMode ? 2 : 1,
                                   borderColor: inputDeleteMode
-                                    ? "#ffffff"
-                                    : "#b84444",
+                                    ? styles.palette.text
+                                    : "rgba(255,255,255,0.2)",
                                 },
                               ]}
                               onPress={() => {
@@ -2186,12 +3291,13 @@ const renderTabMasterFooter = () => (
                                 style={[
                                   styles.generalStyles.text,
                                   {
-                                    fontSize: 9,
+                                    fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE,
                                     textAlign: "center",
                                   },
                                 ]}
+                                numberOfLines={1}
                               >
-                                Delete
+                                Hide/show
                               </Text>
                             </Pressable>
                           )}
@@ -2200,36 +3306,63 @@ const renderTabMasterFooter = () => (
                         <Pressable
                           style={[
                             styles.generalStyles.button,
-                            styles.getInfoViewPressableStyleInput(isMuted),
-                            { height: "70%", maxWidth: "20%", alignContent: "center" },
+                            !listenDisabled && styles.getInfoViewPressableStyleInput(isMuted),
+                            listenDisabled && { backgroundColor: styles.palette.controlSoft },
+                            {
+                              height: PHONE_FOOTER_BUTTON_HEIGHT,
+                              width: "17%",
+                              maxWidth: "17%",
+                              justifyContent: "center",
+                              alignItems: "center",
+                              paddingHorizontal: 2,
+                            },
                           ]}
-                          onPress={handleToggleMute}
+                          onPress={listenDisabled ? undefined : handleToggleMute}
                           onLongPress={() => setListenVolumeModalVisible(true)}
                         >
-                          <Text style={styles.generalStyles.text}>Listen</Text>
-                          <Text style={{ ...styles.generalStyles.text }}>
+                          {!listenDisabled && (
+                            <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
+                              Listen
+                            </Text>
+                          )}
+                          <Text style={{ ...styles.generalStyles.text, fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE }} numberOfLines={1}>
                             {(allInputsSliderValue * 100).toFixed(0)}%
                           </Text>
                         </Pressable>
 
-                        <View style={{ ...styles.generalStyles.timecode, height: "70%", maxWidth: "30%" }}>
-                          <Text style={styles.generalStyles.text}>
+                        <View
+                          style={{
+                            ...styles.generalStyles.timecode,
+                            height: PHONE_FOOTER_BUTTON_HEIGHT,
+                            width: "38%",
+                            maxWidth: "38%",
+                            paddingHorizontal: 4,
+                          }}
+                        >
+                          <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
                             {chosenTemplate?.name || "Name Unknown"}
                           </Text>
-                          <Text style={{ ...styles.generalStyles.text, width: "100%" }}>
-                            {timecodeRef.current}
-                          </Text>
+                          <TimecodeValue style={{ ...styles.generalStyles.text, width: "100%", fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE }} numberOfLines={1} />
                         </View>
 
                         <Pressable
                           style={({ pressed }) => [
                             styles.generalStyles.button,
                             pressed && styles.generalStyles.buttonPressed,
-                            { height: "70%", maxWidth: "20%", alignContent: "center" },
+                            {
+                              height: PHONE_FOOTER_BUTTON_HEIGHT,
+                              width: "17%",
+                              maxWidth: "17%",
+                              justifyContent: "center",
+                              alignItems: "center",
+                              paddingHorizontal: 2,
+                            },
                           ]}
                           onPress={clearAllInputs}
                         >
-                          <Text style={styles.generalStyles.text}>Clear all</Text>
+                          <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE }]} numberOfLines={1}>
+                            Clear all
+                          </Text>
                         </Pressable>
                       </View>
                     )}
@@ -2238,7 +3371,7 @@ const renderTabMasterFooter = () => (
               );
             }
 
-            // Pages 1..N = outputs pages, each shows 16 tiles
+            // Pages 1..N = outputs pages, each shows 16 phone-sized tiles
             const outputPageIndex =
             pageIdx - inputPageCount;
 
@@ -2258,6 +3391,8 @@ const renderTabMasterFooter = () => (
                       onToggleLatch={handleOutputToggleLatch}
                       onToggleUnlatchPress={handleOutputToggleUnlatchPress}
                       onToggleUnlatchRelease={handleOutputToggleUnlatchRelease}
+                      intercomVolumes={intercomVolumes}
+                      onIntercomVolumeChange={handleIntercomVolumeChange}
                       isAppActive={isAppActive}
                       pageIndex={outputPageIndex}
                       pageSize={PAGE_SIZE_PHONE}
@@ -2267,7 +3402,7 @@ const renderTabMasterFooter = () => (
                   {generalComponent.getSelectorLineBreak()}
 
                     <View style={{...styles.generalStyles.buttonContainer}}>
-                      <Pressable style={[styles.generalStyles.button, PHONE_GROUP_BUTTON_STYLE, styles.getInfoViewPressableStyleOmni(omniIsOn)]}
+                      <Pressable style={[styles.generalStyles.button, PHONE_GROUP_BUTTON_STYLE, { marginRight: 4 }, styles.getInfoViewPressableStyleOmni(omniIsOn)]}
                               onPress={() => {
                                 if (chosenTemplate?.omniState) {
                                   handleToggleLatchGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
@@ -2283,7 +3418,9 @@ const renderTabMasterFooter = () => (
                                   handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
                                 }
                               }}>
-                        <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
+                        <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
+                          {chosenTemplate?.groupName}
+                        </Text>
                       </Pressable>
 
                       <Pressable style={[styles.generalStyles.button, PHONE_GROUP_BUTTON_STYLE, styles.getInfoViewPressableStyleGroup(groupIsOn)]}
@@ -2302,27 +3439,50 @@ const renderTabMasterFooter = () => (
                                   handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
                                 }
                               }}>
-                        <Text style={styles.generalStyles.text}>{chosenTemplate?.omniName}</Text>
+                        <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
+                          {chosenTemplate?.omniName}
+                        </Text>
                       </Pressable>
 
 
-                      <View style={styles.generalStyles.timecode}>
-                        <Text style={styles.generalStyles.text}>{chosenTemplate?.name || 'Name Unknown'}</Text>
-                        <Text style={{...styles.generalStyles.text, width: "100%"}}>{timecodeRef.current}</Text>
+                      <View
+                        style={{
+                          ...styles.generalStyles.timecode,
+                          height: PHONE_FOOTER_BUTTON_HEIGHT,
+                          width: "22%",
+                          maxWidth: "22%",
+                          paddingHorizontal: 4,
+                        }}
+                      >
+                        <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
+                          {chosenTemplate?.name || 'Name Unknown'}
+                        </Text>
+                        <TimecodeValue style={{...styles.generalStyles.text, width: "100%", fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE}} numberOfLines={1} />
                       </View>
 
-                      <Pressable style={[styles.generalStyles.button, styles.getInfoViewPressableStyleInput(isMuted)]} 
-                              onPress={handleToggleMute}
+                      <Pressable style={[
+                              styles.generalStyles.button,
+                              !listenDisabled && styles.getInfoViewPressableStyleInput(isMuted),
+                              listenDisabled && { backgroundColor: styles.palette.controlSoft },
+                              {
+                                height: PHONE_FOOTER_BUTTON_HEIGHT,
+                                width: "14%",
+                                maxWidth: "14%",
+                                justifyContent: "center",
+                                alignItems: "center",
+                                paddingHorizontal: 2,
+                              }
+                            ]}
+                              onPress={listenDisabled ? undefined : handleToggleMute}
                               onLongPress={() => setListenVolumeModalVisible(true)}>
-                        <Text style={styles.generalStyles.text}>Listen</Text>
-                        <Text style={{...styles.generalStyles.text}}>{(allInputsSliderValue * 100).toFixed(0)}%</Text>
-                      </Pressable>
-
-                      <Pressable style={({ pressed }) => [
-                            styles.generalStyles.button,
-                            pressed && styles.generalStyles.buttonPressed,]}
-                            onPress={clearAllInputs}>
-                        <Text style={styles.generalStyles.text}>Clear all</Text>
+                        {!listenDisabled && (
+                          <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
+                            Listen
+                          </Text>
+                        )}
+                        <Text style={{...styles.generalStyles.text, fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE}} numberOfLines={1}>
+                          {(allInputsSliderValue * 100).toFixed(0)}%
+                        </Text>
                       </Pressable>
                     </View>
                   
@@ -2331,6 +3491,7 @@ const renderTabMasterFooter = () => (
             );
           })}
         </ScrollView>
+        {isTablet && renderProfileModal()}
       </SafeAreaView>
     </GestureHandlerRootView>
   );

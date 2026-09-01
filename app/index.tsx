@@ -1,12 +1,12 @@
 
-import { View, Text, StyleSheet, Pressable, SafeAreaView, StatusBar, Platform, Image, Modal, } from 'react-native'
-import Slider from '@react-native-community/slider';
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { View, Text, StyleSheet, StatusBar, Image } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useState, useEffect } from 'react'
 import { Alert } from 'react-native';  // To show alerts
 import { DatabaseHandler } from '@/scripts/database/database'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as generalComponent from '../scripts/general_scripts/custom_components'
+import { palette } from '../scripts/styles'
 import * as Device from 'expo-device';
 import * as ServiceDiscovery from '@inthepocket/react-native-service-discovery';
 
@@ -128,7 +128,8 @@ const searchForService = () => {
             title: "Connect",
             buttonStyle: styles.button,
             textStyle: styles.buttonText,
-            pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+            pDefaultButtonBgColor: palette.control,
+            pPressedButtonBgColor: palette.controlPressed,
             isDisabled: isButtonDisabled,
             onPress: () => searchForService()
           })}
@@ -145,49 +146,65 @@ export default index
 const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
-    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0
+    backgroundColor: palette.appBg,
   },
   container: {
     flex: 1,
     justifyContent: 'center',
-    backgroundColor: 'rgb(36, 34, 34)',
+    backgroundColor: palette.appBg,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
   },
   titleContainer:{
-    flex: 1,
+    flex: 0.9,
     flexDirection: "column",
     alignSelf: 'center',
-    marginTop:30
+    justifyContent: 'flex-end',
+    marginTop: 12,
   },
   imageContainer:{
-    flex:1
+    flex: 1.2,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   linkContainer:{
-    flex: 2,
-    alignSelf: 'center'
+    flex: 1.3,
+    width: '100%',
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 10,
   },
   title: {
-    alignSelf: "flex-start",
-    color: "white",
+    alignSelf: "center",
+    color: palette.text,
     fontSize: 90,
-    fontWeight: "bold",
+    fontWeight: "900",
     textAlign: "center",
   },
   button: {
+    minWidth: 210,
+    width: '58%',
+    maxWidth: 420,
     height: 60,
-    borderRadius: 20,
+    borderRadius: 8,
     justifyContent: "center",
-    backgroundColor: "rgba(255,250,250,0.25)",
-    padding: 6,
+    alignItems: "center",
+    backgroundColor: palette.control,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    paddingHorizontal: 18,
   },
   buttonText: {
-    color: "white",
+    color: palette.text,
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "800",
     textAlign: "center",
   },
   image:{
         width: "100%",
-        height: "70%",
+        height: "74%",
         resizeMode: "contain"
     },
 })
@@ -195,21 +212,24 @@ const styles = StyleSheet.create({
   const localstyles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.68)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
     width: '40%',
     padding: 20,
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    backgroundColor: palette.panelRaised,
+    borderRadius: 8,
+    borderColor: palette.borderStrong,
+    borderWidth: 1,
     alignItems: 'center',
   },
   modalTitle: {
     marginBottom: 10,
     fontSize: 16,
     fontWeight: 'bold',
+    color: palette.text,
   },
   slider: {
     width: '100%',

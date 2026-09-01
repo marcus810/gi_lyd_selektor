@@ -1,6 +1,7 @@
 /* selector_choice.tsx (safe/native wrapper) */
 import React, { useEffect, useState } from 'react';
-import { View, Text, NativeModules, SafeAreaView, Alert, Platform } from 'react-native';
+import { View, Text, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as styles from '../scripts/styles';
 import * as generalComponent from '../scripts/general_scripts/custom_components';
@@ -22,6 +23,7 @@ const selector_choice = () => {
 
 
   useEffect(() => {
+    let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Get device type once
     (async () => {
@@ -35,16 +37,22 @@ const selector_choice = () => {
 
     // socket disconnect handler
     const handleSocketDisconnect = () => {
-      setTimeout(() => {
+      redirectTimer = setTimeout(() => {
         Alert.alert(
           'Failed to Reconnect',
           'The connection could not be restored. You will be redirected to the main screen.',
-          [{ text: 'OK', onPress: () => { db.closeSocket(); router.push('/'); } }]
+          [{ text: 'OK', onPress: () => { db.closeSocket(); router.dismissTo('/'); } }]
         );
       }, 500);
     };
-    db.onSocketDisconnect(handleSocketDisconnect);
+    const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect);
 
+    return () => {
+      removeDisconnectHandler();
+      if (redirectTimer !== null) {
+        clearTimeout(redirectTimer);
+      }
+    };
   }, []);
 
   // navigate to selector role (speaker + mic)
@@ -73,26 +81,28 @@ const selector_choice = () => {
 
   const goToIndexScreen = () => {
     db.closeSocket();
-    router.push('/');
+    router.dismissTo('/');
   };
 
   return (
-    <GestureHandlerRootView>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         <View style={styles.templateSelectorStyles.container}>
-          <View style={{ height: 80, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ alignSelf: 'center', justifyContent: 'flex-start', flex: 0.5 }}>
+          <View style={styles.templateSelectorStyles.header}>
+            <View style={styles.templateSelectorStyles.headerSide}>
               {generalComponent.getButton({
                 title: 'Go Back',
-                pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+                pDefaultButtonBgColor: styles.palette.control,
+                pPressedButtonBgColor: styles.palette.controlPressed,
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
                 onPress: () => goToIndexScreen()
               })}
             </View>
-            <View style={{ alignSelf: 'center', justifyContent: 'center', flex: 5 }}>
+            <View style={styles.templateSelectorStyles.headerCenter}>
               <Text style={[styles.templateSelectorStyles.title, !isTablet ? { fontSize: 30 } : undefined]}>Choose role</Text>
             </View>
+            <View style={styles.templateSelectorStyles.headerSide} />
           </View>
 
           <View style={styles.templateSelectorStyles.linkContainer}>
@@ -100,14 +110,16 @@ const selector_choice = () => {
               title: 'Selector',
               buttonStyle: styles.generalStyles.indexButton,
               textStyle: styles.generalStyles.indexButtonText,
-              pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+              pDefaultButtonBgColor: styles.palette.control,
+              pPressedButtonBgColor: styles.palette.controlPressed,
               onPress: goToSelectorScreen,
             })}
             {generalComponent.getButton({
               title: 'Listener',
               buttonStyle: styles.generalStyles.indexButton,
               textStyle: styles.generalStyles.indexButtonText,
-              pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+              pDefaultButtonBgColor: styles.palette.control,
+              pPressedButtonBgColor: styles.palette.controlPressed,
               onPress: goToListenerScreen
             })}
           </View>

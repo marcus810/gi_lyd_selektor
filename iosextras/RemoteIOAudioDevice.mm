@@ -63,9 +63,16 @@ static void FillAudioBufferListWithSilence(
 
 @interface RemoteIOAudioDevice ()
 
+@property(nonatomic, strong, nullable) id routeChangeObserver;
+
 - (BOOL)configureAudioSession;
+- (BOOL)ensureAudioSessionForPlayout;
+- (BOOL)ensureAudioSessionForRecording;
 - (BOOL)createRemoteIOAudioUnit;
+- (BOOL)rebuildRemoteIOAudioUnit;
 - (void)destroyRemoteIOAudioUnit;
+- (void)subscribeToAudioRouteChanges;
+- (void)handleAudioRouteChange:(NSNotification *)notification;
 
 - (OSStatus)renderWithActionFlags:
                   (AudioUnitRenderActionFlags *)actionFlags
@@ -107,8 +114,11 @@ static void FillAudioBufferListWithSilence(
 
     _recordingInitialized = NO;
     _recording = NO;
+    _audioUnitInputEnabled = NO;
 
     _ioBufferDuration = kRequestedIOBufferDuration;
+
+    [self subscribeToAudioRouteChanges];
 
     NSLog(@"[REMOTE_IO] RemoteIOAudioDevice created");
   }
@@ -117,6 +127,12 @@ static void FillAudioBufferListWithSilence(
 }
 
 - (void)dealloc {
+  if (_routeChangeObserver != nil) {
+    [[NSNotificationCenter defaultCenter]
+      removeObserver:_routeChangeObserver];
+    _routeChangeObserver = nil;
+  }
+
   [self destroyRemoteIOAudioUnit];
   _rtcDelegate = nil;
 }
@@ -215,22 +231,9 @@ static void FillAudioBufferListWithSilence(
     delegate.preferredInputIOBufferDuration
   );
 
-  if (![self configureAudioSession]) {
-    NSLog(@"[REMOTE_IO] AVAudioSession configuration failed");
-    _rtcDelegate = nil;
-    return NO;
-  }
-
-  if (![self createRemoteIOAudioUnit]) {
-    NSLog(@"[REMOTE_IO] RemoteIO Audio Unit creation failed");
-    [self destroyRemoteIOAudioUnit];
-    _rtcDelegate = nil;
-    return NO;
-  }
-
   _initialized = YES;
 
-  NSLog(@"[REMOTE_IO] initialization complete");
+  NSLog(@"[REMOTE_IO] initialized; hardware creation deferred");
 
   return YES;
 }
@@ -282,13 +285,16 @@ static void FillAudioBufferListWithSilence(
     return NO;
   }
 
-  if (_audioUnit == NULL) {
-    if (![self createRemoteIOAudioUnit]) {
-      return NO;
-    }
+  if (![self ensureAudioSessionForPlayout]) {
+    return NO;
   }
 
   _playoutInitialized = YES;
+
+  if (_audioUnit == NULL && ![self createRemoteIOAudioUnit]) {
+    _playoutInitialized = NO;
+    return NO;
+  }
 
   return YES;
 }
@@ -393,13 +399,22 @@ static void FillAudioBufferListWithSilence(
     return NO;
   }
 
-  if (_audioUnit == NULL) {
-    if (![self createRemoteIOAudioUnit]) {
-      return NO;
-    }
+  if (![self ensureAudioSessionForRecording]) {
+    return NO;
   }
 
+  BOOL wasRecordingInitialized = _recordingInitialized;
   _recordingInitialized = YES;
+
+  BOOL audioUnitReady =
+      _audioUnit == NULL
+        ? [self createRemoteIOAudioUnit]
+        : (_audioUnitInputEnabled || [self rebuildRemoteIOAudioUnit]);
+
+  if (!audioUnitReady) {
+    _recordingInitialized = wasRecordingInitialized;
+    return NO;
+  }
 
   NSLog(@"[REMOTE_IO] recording initialized");
 
@@ -491,7 +506,148 @@ static void FillAudioBufferListWithSilence(
   );
 }
 
+#pragma mark - Audio route changes
+
+- (void)subscribeToAudioRouteChanges {
+  __weak RemoteIOAudioDevice *weakSelf = self;
+
+  _routeChangeObserver = [
+    [NSNotificationCenter defaultCenter]
+    addObserverForName:AVAudioSessionRouteChangeNotification
+    object:nil
+    queue:[NSOperationQueue mainQueue]
+    usingBlock:^(NSNotification *notification) {
+      [weakSelf handleAudioRouteChange:notification];
+    }
+  ];
+}
+
+- (void)handleAudioRouteChange:(NSNotification *)notification {
+  NSNumber *reasonValue =
+      notification.userInfo[AVAudioSessionRouteChangeReasonKey];
+
+  AVAudioSessionRouteChangeReason reason =
+      (AVAudioSessionRouteChangeReason)reasonValue.unsignedIntegerValue;
+
+  BOOL affectsHardware =
+      reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable ||
+      reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable ||
+      reason == AVAudioSessionRouteChangeReasonRouteConfigurationChange ||
+      reason == AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory;
+
+  if (!affectsHardware) {
+    return;
+  }
+
+  AVAudioSessionRouteDescription *previousRoute =
+      notification.userInfo[AVAudioSessionRouteChangePreviousRouteKey];
+
+  NSLog(
+    @"[REMOTE_IO] route change reason=%lu previous=%@ current=%@",
+    (unsigned long)reason,
+    previousRoute,
+    [AVAudioSession sharedInstance].currentRoute
+  );
+
+  id<RTCAudioDeviceDelegate> delegate = _rtcDelegate;
+
+  if (delegate == nil) {
+    return;
+  }
+
+  [delegate dispatchAsync:^{
+    if (!self->_initialized || self->_rtcDelegate == nil) {
+      return;
+    }
+
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+
+    self->_ioBufferDuration =
+        session.IOBufferDuration > 0
+          ? session.IOBufferDuration
+          : kRequestedIOBufferDuration;
+
+    [self->_rtcDelegate notifyAudioInputParametersChange];
+    [self->_rtcDelegate notifyAudioOutputParametersChange];
+
+    NSLog(
+      @"[REMOTE_IO] synchronized route parameters: "
+       "sampleRate=%.2f bufferDuration=%.6f inputLatency=%.6f "
+       "outputLatency=%.6f",
+      session.sampleRate,
+      self->_ioBufferDuration,
+      session.inputLatency,
+      session.outputLatency
+    );
+  }];
+}
+
+
 #pragma mark - AVAudioSession
+
+- (BOOL)ensureAudioSessionForPlayout {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  BOOL hasSupportedCategory =
+      [session.category isEqualToString:AVAudioSessionCategoryPlayback] ||
+      [session.category
+        isEqualToString:AVAudioSessionCategoryPlayAndRecord];
+
+  if (!hasSupportedCategory) {
+    return [self configureAudioSession];
+  }
+
+  NSError *error = nil;
+
+  if (![session setActive:YES error:&error]) {
+    NSLog(
+      @"[REMOTE_IO] activating playout session failed: %@",
+      error
+    );
+    return NO;
+  }
+
+  _ioBufferDuration =
+      session.IOBufferDuration > 0
+        ? session.IOBufferDuration
+        : kRequestedIOBufferDuration;
+
+  return YES;
+}
+
+- (BOOL)ensureAudioSessionForRecording {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  AVAudioSessionCategoryOptions requiredOptions =
+      AVAudioSessionCategoryOptionDefaultToSpeaker |
+      AVAudioSessionCategoryOptionAllowBluetoothHFP |
+      AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+
+  BOOL hasRecordingConfiguration =
+      [session.category
+        isEqualToString:AVAudioSessionCategoryPlayAndRecord] &&
+      (session.categoryOptions & requiredOptions) == requiredOptions;
+
+  if (!hasRecordingConfiguration) {
+    return [self configureAudioSession];
+  }
+
+  NSError *error = nil;
+
+  if (![session setActive:YES error:&error]) {
+    NSLog(
+      @"[REMOTE_IO] activating recording session failed: %@",
+      error
+    );
+    return NO;
+  }
+
+  _ioBufferDuration =
+      session.IOBufferDuration > 0
+        ? session.IOBufferDuration
+        : kRequestedIOBufferDuration;
+
+  return YES;
+}
+
 
 - (BOOL)configureAudioSession {
   AVAudioSession *session = [AVAudioSession sharedInstance];
@@ -499,7 +655,8 @@ static void FillAudioBufferListWithSilence(
 
   AVAudioSessionCategoryOptions options =
       AVAudioSessionCategoryOptionDefaultToSpeaker |
-      AVAudioSessionCategoryOptionAllowBluetoothHFP;
+      AVAudioSessionCategoryOptionAllowBluetoothHFP |
+      AVAudioSessionCategoryOptionAllowBluetoothA2DP;
 
   BOOL categorySet = [
     session
@@ -512,6 +669,23 @@ static void FillAudioBufferListWithSilence(
   if (!categorySet) {
     NSLog(
       @"[REMOTE_IO] setCategory failed: %@",
+      error
+    );
+
+    return NO;
+  }
+
+  error = nil;
+
+  BOOL routeOverrideCleared = [
+    session
+    overrideOutputAudioPort:AVAudioSessionPortOverrideNone
+    error:&error
+  ];
+
+  if (!routeOverrideCleared) {
+    NSLog(
+      @"[REMOTE_IO] clearing output override failed: %@",
       error
     );
 
@@ -573,33 +747,6 @@ static void FillAudioBufferListWithSilence(
     _ioBufferDuration = session.IOBufferDuration;
   } else {
     _ioBufferDuration = kRequestedIOBufferDuration;
-  }
-
-  /*
-   * defaultToSpeaker should normally be sufficient. Only override if
-   * the system has selected the receiver.
-   */
-  AVAudioSessionPortDescription *currentOutput =
-      session.currentRoute.outputs.firstObject;
-
-  if ([currentOutput.portType
-       isEqualToString:AVAudioSessionPortBuiltInReceiver]) {
-    error = nil;
-
-    BOOL speakerForced = [
-      session
-      overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker
-      error:&error
-    ];
-
-    if (!speakerForced) {
-      NSLog(
-        @"[REMOTE_IO] speaker override failed: %@",
-        error
-      );
-
-      return NO;
-    }
   }
 
   NSLog(@"[REMOTE_IO] AVAudioSession configured");
@@ -695,11 +842,15 @@ static void FillAudioBufferListWithSilence(
     return NO;
   }
 
-  /*
-   * Input bus 1 remains disabled. RemoteIO input is disabled by default,
-   * but this explicitly documents the receive-only test.
-   */
-  UInt32 enableInput = 1;
+  BOOL sessionSupportsInput = [
+    [AVAudioSession sharedInstance].category
+    isEqualToString:AVAudioSessionCategoryPlayAndRecord
+  ];
+
+  UInt32 enableInput =
+      sessionSupportsInput && (_recordingInitialized || _recording)
+        ? 1
+        : 0;
 
   status = AudioUnitSetProperty(
     _audioUnit,
@@ -715,7 +866,12 @@ static void FillAudioBufferListWithSilence(
     return NO;
   }
 
-  NSLog(@"[REMOTE_IO] microphone input bus enabled");
+  _audioUnitInputEnabled = enableInput != 0;
+
+  NSLog(
+    @"[REMOTE_IO] microphone input bus %@",
+    _audioUnitInputEnabled ? @"enabled" : @"disabled"
+  );
 
   /*
    * WebRTC's Objective-C audio-device adapter exchanges signed
@@ -759,29 +915,31 @@ static void FillAudioBufferListWithSilence(
     [self destroyRemoteIOAudioUnit];
     return NO;
   }
-  /*
-  * For input bus 1, the Audio Unit supplies microphone audio through
-  * the output scope of the input element.
-  */
-  status = AudioUnitSetProperty(
-    _audioUnit,
-    kAudioUnitProperty_StreamFormat,
-    kAudioUnitScope_Output,
-    1,
-    &format,
-    sizeof(format)
-  );
+  if (_audioUnitInputEnabled) {
+    /*
+     * For input bus 1, the Audio Unit supplies microphone audio through
+     * the output scope of the input element.
+     */
+    status = AudioUnitSetProperty(
+      _audioUnit,
+      kAudioUnitProperty_StreamFormat,
+      kAudioUnitScope_Output,
+      1,
+      &format,
+      sizeof(format)
+    );
 
-  if (!CheckOSStatus(status, @"set RemoteIO input stream format")) {
-    [self destroyRemoteIOAudioUnit];
-    return NO;
+    if (!CheckOSStatus(status, @"set RemoteIO input stream format")) {
+      [self destroyRemoteIOAudioUnit];
+      return NO;
+    }
+
+    NSLog(
+      @"[REMOTE_IO] microphone format set to %.2f Hz, %u channel(s)",
+      format.mSampleRate,
+      (unsigned int)format.mChannelsPerFrame
+    );
   }
-
-  NSLog(
-    @"[REMOTE_IO] microphone format set to %.2f Hz, %u channel(s)",
-    format.mSampleRate,
-    (unsigned int)format.mChannelsPerFrame
-  );
 
   /*
    * Allow Core Audio to request larger slices if the route needs them.
@@ -828,77 +986,79 @@ static void FillAudioBufferListWithSilence(
     return NO;
   }
 
-  /*
-  * WebRTC supplies the AudioBufferList when it requests recorded data,
-  * so RemoteIO itself does not need to allocate a microphone buffer.
-  */
-  UInt32 shouldAllocateInputBuffer = 0;
+  if (_audioUnitInputEnabled) {
+    /*
+     * WebRTC supplies the AudioBufferList when it requests recorded data,
+     * so RemoteIO itself does not need to allocate a microphone buffer.
+     */
+    UInt32 shouldAllocateInputBuffer = 0;
 
-  status = AudioUnitSetProperty(
-    _audioUnit,
-    kAudioUnitProperty_ShouldAllocateBuffer,
-    kAudioUnitScope_Output,
-    1,
-    &shouldAllocateInputBuffer,
-    sizeof(shouldAllocateInputBuffer)
-  );
+    status = AudioUnitSetProperty(
+      _audioUnit,
+      kAudioUnitProperty_ShouldAllocateBuffer,
+      kAudioUnitScope_Output,
+      1,
+      &shouldAllocateInputBuffer,
+      sizeof(shouldAllocateInputBuffer)
+    );
 
-  if (!CheckOSStatus(
-        status,
-        @"disable RemoteIO microphone buffer allocation"
-      )) {
-    [self destroyRemoteIOAudioUnit];
-    return NO;
-  }
-
-  /*
-  * WebRTC calls this block with an AudioBufferList. AudioUnitRender
-  * fills that list with microphone PCM from RemoteIO bus 1.
-  */
-  AudioUnit recordingAudioUnit = _audioUnit;
-
-  _recordRenderBlock = [
-    ^OSStatus(
-        AudioUnitRenderActionFlags *renderActionFlags,
-        const AudioTimeStamp *renderTimeStamp,
-        NSInteger renderBusNumber,
-        UInt32 renderFrameCount,
-        AudioBufferList *inputData,
-        void *renderContext
-    ) {
-      return AudioUnitRender(
-        recordingAudioUnit,
-        renderActionFlags,
-        renderTimeStamp,
-        (UInt32)renderBusNumber,
-        renderFrameCount,
-        inputData
-      );
+    if (!CheckOSStatus(
+          status,
+          @"disable RemoteIO microphone buffer allocation"
+        )) {
+      [self destroyRemoteIOAudioUnit];
+      return NO;
     }
-    copy
-  ];
 
-  AURenderCallbackStruct recordingCallback;
-  memset(&recordingCallback, 0, sizeof(recordingCallback));
+    /*
+     * WebRTC calls this block with an AudioBufferList. AudioUnitRender
+     * fills that list with microphone PCM from RemoteIO bus 1.
+     */
+    AudioUnit recordingAudioUnit = _audioUnit;
 
-  recordingCallback.inputProc = RemoteIORecordingCallback;
-  recordingCallback.inputProcRefCon = (__bridge void *)self;
+    _recordRenderBlock = [
+      ^OSStatus(
+          AudioUnitRenderActionFlags *renderActionFlags,
+          const AudioTimeStamp *renderTimeStamp,
+          NSInteger renderBusNumber,
+          UInt32 renderFrameCount,
+          AudioBufferList *inputData,
+          void *renderContext
+      ) {
+        return AudioUnitRender(
+          recordingAudioUnit,
+          renderActionFlags,
+          renderTimeStamp,
+          (UInt32)renderBusNumber,
+          renderFrameCount,
+          inputData
+        );
+      }
+      copy
+    ];
 
-  status = AudioUnitSetProperty(
-    _audioUnit,
-    kAudioOutputUnitProperty_SetInputCallback,
-    kAudioUnitScope_Global,
-    1,
-    &recordingCallback,
-    sizeof(recordingCallback)
-  );
+    AURenderCallbackStruct recordingCallback;
+    memset(&recordingCallback, 0, sizeof(recordingCallback));
 
-  if (!CheckOSStatus(status, @"install RemoteIO input callback")) {
-    [self destroyRemoteIOAudioUnit];
-    return NO;
+    recordingCallback.inputProc = RemoteIORecordingCallback;
+    recordingCallback.inputProcRefCon = (__bridge void *)self;
+
+    status = AudioUnitSetProperty(
+      _audioUnit,
+      kAudioOutputUnitProperty_SetInputCallback,
+      kAudioUnitScope_Global,
+      1,
+      &recordingCallback,
+      sizeof(recordingCallback)
+    );
+
+    if (!CheckOSStatus(status, @"install RemoteIO input callback")) {
+      [self destroyRemoteIOAudioUnit];
+      return NO;
+    }
+
+    NSLog(@"[REMOTE_IO] microphone input callback installed");
   }
-
-  NSLog(@"[REMOTE_IO] microphone input callback installed");
 
   status = AudioUnitInitialize(_audioUnit);
 
@@ -942,14 +1102,45 @@ static void FillAudioBufferListWithSilence(
   return YES;
 }
 
+- (BOOL)rebuildRemoteIOAudioUnit {
+  BOOL shouldRestart = _playing || _recording;
+
+  if (_rtcDelegate != nil) {
+    if (_playing) {
+      [_rtcDelegate notifyAudioOutputInterrupted];
+    }
+    if (_recording) {
+      [_rtcDelegate notifyAudioInputInterrupted];
+    }
+  }
+
+  [self destroyRemoteIOAudioUnit];
+
+  if (![self createRemoteIOAudioUnit]) {
+    _playing = NO;
+    _recording = NO;
+    return NO;
+  }
+
+  if (!shouldRestart) {
+    return YES;
+  }
+
+  OSStatus status = AudioOutputUnitStart(_audioUnit);
+
+  if (!CheckOSStatus(status, @"restart RemoteIO after configuration change")) {
+    _playing = NO;
+    _recording = NO;
+    return NO;
+  }
+
+  return YES;
+}
+
+
 - (void)destroyRemoteIOAudioUnit {
-  _playing = NO;
-  _recording = NO;
-
-  _playoutInitialized = NO;
-  _recordingInitialized = NO;
-
   _recordRenderBlock = nil;
+  _audioUnitInputEnabled = NO;
 
   if (_audioUnit == NULL) {
     return;

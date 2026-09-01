@@ -27,6 +27,8 @@ type OutputProps = {
   onToggleLatch: (id: number, port: number, groupState: boolean, type: string) => void;
   onToggleUnlatchPress: (id: number, port: number, type: string) => void;
   onToggleUnlatchRelease: (id: number, port: number, type: string) => void;
+  intercomVolumes: { [id: number]: number };
+  onIntercomVolumeChange: (intercom: IntercomInfo, value: number) => void;
   isAppActive?: boolean;
   pageIndex?: number; // 0-based “which phone page”
   pageSize?: number;  // how many tiles per page (ex: 12)
@@ -39,6 +41,8 @@ export const InfoViewOuputContainer: React.FC<OutputProps> = ({
   onToggleLatch,
   onToggleUnlatchPress,
   onToggleUnlatchRelease,
+  intercomVolumes,
+  onIntercomVolumeChange,
   isAppActive = true,
   pageIndex = 0,
   pageSize,
@@ -55,11 +59,6 @@ export const InfoViewOuputContainer: React.FC<OutputProps> = ({
     return () => { mounted = false; };
   }, []);
 
-  // Optional: skip all heavy rendering when backgrounded
-  if (!isAppActive) {
-    return null;
-  }
-
   const outputIntercoms = useMemo(
     () => intercomInfo.filter((ic) => ic.type === "output"),
     [intercomInfo]
@@ -71,6 +70,11 @@ export const InfoViewOuputContainer: React.FC<OutputProps> = ({
 
   const hasInput = inputIntercoms.length > 0;
   const hasOutput = outputIntercoms.length > 0;
+
+  // Optional: skip all heavy rendering when backgrounded
+  if (!isAppActive) {
+    return null;
+  }
 
   if (isTablet) {
       const tabletOuterStyle = {
@@ -161,6 +165,8 @@ export const InfoViewOuputContainer: React.FC<OutputProps> = ({
                     onToggleLatch={onToggleLatch}
                     onToggleUnlatchPress={onToggleUnlatchPress}
                     onToggleUnlatchRelease={onToggleUnlatchRelease}
+                    intercomVolumes={intercomVolumes}
+                    onIntercomVolumeChange={onIntercomVolumeChange}
                     templateInfo={chosenTemplate}
                     isTablet={true}
                   />
@@ -207,7 +213,7 @@ const tileStyle = {
   flexShrink: 0,
   width: `${100 / columns}%`,
   height: `${heightPct}%`,
-  padding: 5,
+  padding: pagedMode ? 4 : 5,
 };
 
 
@@ -239,9 +245,16 @@ const tileStyle = {
           <View
             key={`block-${pagedMode ? `page-${pageIndex}` : blockIdx0}`}
             style={{
+              ...(pagedMode
+                ? {
+                    flex: 1,
+                    height: "100%",
+                  }
+                : {}),
               flexDirection: "row",
               flexWrap: "wrap",
               justifyContent: "flex-start",
+              alignContent: "flex-start",
               width: "100%",
             }}
           >
@@ -284,6 +297,8 @@ const tileStyle = {
                   onToggleLatch={onToggleLatch}
                   onToggleUnlatchPress={onToggleUnlatchPress}
                   onToggleUnlatchRelease={onToggleUnlatchRelease}
+                  intercomVolumes={intercomVolumes}
+                  onIntercomVolumeChange={onIntercomVolumeChange}
                   templateInfo={chosenTemplate}
                   isTablet={isTablet}
                 />
@@ -344,11 +359,6 @@ export const InfoViewInputContainer: React.FC<InputProps> = ({
   isAppActive = true,
 }) => {
   const db = DatabaseHandler.getInstance();
-
-  // Optional: skip all heavy rendering when backgrounded
-  if (!isAppActive) {
-    return null;
-  }
 
   const inputAmount = inputInfo.length;
   const hiddenInputPortSet = useMemo(
@@ -541,9 +551,10 @@ const renderInputTile = (input: InputInfo) => {
   style={{
     width: gridItemSize,
     height: gridItemSize,
-    backgroundColor: "rgba(255, 0, 0, 0.18)",
-    borderWidth: 2,
-    borderColor: "rgba(255, 0, 0, 0.65)",
+    backgroundColor: "rgba(22, 190, 216, 0.1)",
+    borderWidth: 1,
+    borderColor: styles.palette.cyan,
+    borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
   }}
@@ -569,6 +580,11 @@ const renderInputTile = (input: InputInfo) => {
       slaveColors,
     ]
   );
+
+  // Optional: skip all heavy rendering when backgrounded
+  if (!isAppActive) {
+    return null;
+  }
 
   return (
     <>
@@ -647,26 +663,15 @@ const renderInputTile = (input: InputInfo) => {
 
 const localstyles = StyleSheet.create({
   modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
+    ...styles.modalStyles.overlay,
   },
   modalContent: {
-    width: "40%",
-    padding: 20,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    alignItems: "center",
+    ...styles.modalStyles.compactContent,
   },
   modalTitle: {
-    marginBottom: 10,
-    fontSize: 16,
-    fontWeight: "bold",
+    ...styles.modalStyles.title,
   },
   slider: {
-    width: "100%",
-    height: 40,
-    marginBottom: 20,
+    ...styles.modalStyles.slider,
   },
 });

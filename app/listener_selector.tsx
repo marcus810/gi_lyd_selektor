@@ -1,7 +1,8 @@
 
 
 /* libraries */
-import { View, Text, SafeAreaView } from 'react-native'
+import { View, Text } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
 /* our files */
@@ -35,6 +36,7 @@ const ListenerSelector = () => {
   const [isTablet, setIsTablet] = useState(false);
 
   useEffect(() => {
+    let redirectTimer: ReturnType<typeof setTimeout> | null = null;
     const fetchDeviceType = async () => {
       const type = await Device.getDeviceTypeAsync();
       setIsTablet(type === Device.DeviceType.TABLET);
@@ -69,10 +71,10 @@ const ListenerSelector = () => {
     };
     fetchData();
 
-    const goToIndexScreen = () => router.push('/');
+    const goToIndexScreen = () => router.dismissTo('/');
 
     const handleSocketDisconnect = () => {
-      setTimeout(() => {
+      redirectTimer = setTimeout(() => {
         Alert.alert(
           'Failed to Reconnect',
           'The connection could not be restored. You will be redirected to the main screen.',
@@ -80,9 +82,13 @@ const ListenerSelector = () => {
         );
       }, 500);
     };
-    db.onSocketDisconnect(handleSocketDisconnect);
+    const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect);
 
     return () => {
+      removeDisconnectHandler();
+      if (redirectTimer !== null) {
+        clearTimeout(redirectTimer);
+      }
       db.closeSocket();
     };
     
@@ -90,7 +96,7 @@ const ListenerSelector = () => {
 
   const goToIndexScreen = () => {
     db.listenerExit(currentTemplate)
-    router.push('/');
+    router.dismissTo('/');
   };
 
   // Called whenever the user picks a different value
@@ -120,7 +126,16 @@ const ListenerSelector = () => {
         groupState: false,
         groupName: "",
         deviceUuid:"",
-        deviceExpiryDate: "" }
+        deviceExpiryDate: "",
+        lastActivationUtc: "",
+        autoDuck: false,
+        autoDuckGain: 1,
+        autoDuckThreshold: 0,
+        autoDuckRelease: 0,
+        isMaster: false,
+        isTabMaster: false,
+        isSlave: false,
+        slaveColor: "" }
         setCurrentTemplate(fakeTemplate)
         await db.listenerJoin(fakeTemplate)
     }
@@ -152,25 +167,19 @@ const ListenerSelector = () => {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
         <View style={styles.templateSelectorStyles.container}>
-          <View
-            style={{
-              height: 80,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <View style={{ flex: 0.5, justifyContent: 'flex-start' }}>
+          <View style={styles.templateSelectorStyles.header}>
+            <View style={styles.templateSelectorStyles.headerSide}>
               {generalComponent.getButton({
                 title: 'Go Back',
-                pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+                pDefaultButtonBgColor: styles.palette.control,
+                pPressedButtonBgColor: styles.palette.controlPressed,
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
                 onPress: () => goToIndexScreen(),
               })}
             </View>
-            <View style={{ flex: 5, alignItems: 'center', justifyContent: 'center' }}>
-            </View>
+            <View style={styles.templateSelectorStyles.headerCenter} />
+            <View style={styles.templateSelectorStyles.headerSide} />
           </View>
 
           {/* ───── Fully Centered Drop-down + Toggle Button ───── */}
@@ -179,6 +188,7 @@ const ListenerSelector = () => {
               flex: 1,
               justifyContent: 'center',
               alignItems: 'center',
+              paddingHorizontal: 16,
             }}
           >
             {/* “Select Template” label, centered */}
@@ -192,7 +202,7 @@ const ListenerSelector = () => {
             </Text>
 
             {/* Wrapper to force dropdown width to 50% of parent */}
-            <View style={{ width: '50%' }}>
+            <View style={{ width: isTablet ? '50%' : '72%', zIndex: 10 }}>
               <DropDownPicker
                 open={open}
                 value={value}
@@ -210,27 +220,40 @@ const ListenerSelector = () => {
                 }}
                 showArrowIcon={false}
                 style={{
-                  borderColor: '#ccc',
-                  backgroundColor: '#fff',
+                  borderColor: styles.palette.borderStrong,
+                  backgroundColor: styles.palette.panelRaised,
                   width: '100%',
+                  minHeight: 54,
+                  borderRadius: 8,
                 }}
                 dropDownContainerStyle={{
-                  borderColor: '#ccc',
-                  backgroundColor: '#fff',
+                  borderColor: styles.palette.borderStrong,
+                  backgroundColor: styles.palette.panelRaised,
                   width: '100%',
+                  borderRadius: 8,
                 }}
                 labelStyle={[
-                  {textAlign: 'center',
+                  {textAlign: 'center', color: styles.palette.text,
                   }, !isTablet ? { fontSize:  20} : { fontSize:  30}
                 ]}
                 placeholderStyle={[
-                  {textAlign: 'center',
+                  {textAlign: 'center', color: styles.palette.textMuted,
                   }, !isTablet ? { fontSize:  20} : { fontSize:  30}
                 ]}
                 textStyle={[styles.generalStyles.text,
                   {textAlign: 'center',
-                  color: "black"}, !isTablet ? { fontSize:  20} : { fontSize:  30}
+                  color: styles.palette.text}, !isTablet ? { fontSize:  20} : { fontSize:  30}
                 ]}
+                listItemLabelStyle={{
+                  color: styles.palette.text,
+                  textAlign: 'center',
+                }}
+                selectedItemContainerStyle={{
+                  backgroundColor: styles.palette.controlPressed,
+                }}
+                itemSeparatorStyle={{
+                  backgroundColor: styles.palette.border,
+                }}
               />
             </View>
 
@@ -238,12 +261,16 @@ const ListenerSelector = () => {
             <View style={{ marginTop: 20 }}>
               {generalComponent.getButton({
                 title: isListening ? 'Mute' : 'Listen',
-                pDefaultButtonBgColor: 'rgba(66, 63, 63, 0.75)',
+                pDefaultButtonBgColor: isListening ? styles.palette.danger : styles.palette.control,
+                pPressedButtonBgColor: styles.palette.controlPressed,
                 buttonStyle: {
                   paddingHorizontal: 20,
                   paddingVertical: 12,
                   borderRadius: 8,
-                  backgroundColor: '#007AFF',
+                  minWidth: 150,
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: styles.palette.borderStrong,
                 },
                 textStyle: {...styles.generalStyles.text,
                   color: '#fff',

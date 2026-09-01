@@ -23,9 +23,4 @@ RCT_EXTERN_METHOD(debugAudioSession:
                   rejecter:
                   (RCTPromiseRejectBlock)reject)
 
-RCT_EXTERN_METHOD(forceSpeaker:
-                  (RCTPromiseResolveBlock)resolve
-                  rejecter:
-                  (RCTPromiseRejectBlock)reject)
-
 @end

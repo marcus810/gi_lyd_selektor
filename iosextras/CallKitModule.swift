@@ -93,7 +93,11 @@ class CallKitModule: NSObject, CXProviderDelegate {
       do {
         try audioSession.setCategory(.playAndRecord,
                                      mode: .voiceChat,
-                                     options: [.allowBluetooth, .defaultToSpeaker])
+                                     options: [
+                                       .allowBluetoothHFP,
+                                       .allowBluetoothA2DP,
+                                       .defaultToSpeaker
+                                     ])
         try audioSession.setActive(true)
         print("[CallKit] didActivate audioSession; asserted playAndRecord voiceChat")
       } catch {

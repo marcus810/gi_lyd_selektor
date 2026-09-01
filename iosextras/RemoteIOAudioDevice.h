@@ -24,6 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
 
   volatile BOOL _recordingInitialized;
   volatile BOOL _recording;
+  volatile BOOL _audioUnitInputEnabled;
 
   NSTimeInterval _ioBufferDuration;
 }
