@@ -1,7 +1,7 @@
 
 
 /* libraries */
-import { View, Text, TextInput, AppState, AppStateStatus, Pressable, LayoutChangeEvent, Dimensions, Modal, KeyboardAvoidingView, Platform, Button } from 'react-native'
+import { View, Text, TextInput, Image, AppState, AppStateStatus, Pressable, LayoutChangeEvent, Dimensions, Modal, KeyboardAvoidingView, Platform } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { Alert } from 'react-native';  // To show alerts
@@ -17,6 +17,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Device from 'expo-device';
 import Slider from "@react-native-community/slider";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { BlurView } from 'expo-blur';
 
 const TIMECODE_RENDER_THROTTLE_MS = 100;
 
@@ -40,6 +42,8 @@ type TimecodeSample = {
   value: string;
   sequence: number | null;
 };
+
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const TimecodeValue = React.memo(({
   style,
@@ -167,6 +171,15 @@ const INPUT_PAGE_SIZE = 64;
 const [inputReorderMode, setInputReorderMode] = useState(false);
 const [inputDeleteMode, setInputDeleteMode] = useState(false);
 const [hiddenInputPorts, setHiddenInputPorts] = useState<number[]>([]);
+const [floorPlan, setFloorPlan] = useState<types.FloorPlanInfo>({
+  image: "",
+  imageName: "",
+  imageWidth: 0,
+  imageHeight: 0,
+  markers: [],
+});
+const [floorPlanOutputToggleStates, setFloorPlanOutputToggleStates] = useState<{ [port: number]: boolean }>({});
+const [floorPlanAreaSize, setFloorPlanAreaSize] = useState({ width: 0, height: 0 });
 
 const hiddenInputPortSet = useMemo(
   () => new Set(hiddenInputPorts),
@@ -507,8 +520,50 @@ const totalPages = chosenTemplate?.isTabMaster
   : inputPageCount + outputPages;
   const screenWidth = Dimensions.get("window").width;
   const scrollRef = useRef<ScrollView | null>(null);
-
   const [isTablet, setIsTablet] = useState(false);
+
+const floorPlanInputsByPort = useMemo(
+  () => new Map(inputInfoList.map(input => [Number(input.port), input])),
+  [inputInfoList]
+);
+
+const floorPlanAspectRatio =
+  floorPlan.imageWidth > 0 && floorPlan.imageHeight > 0
+    ? floorPlan.imageWidth / floorPlan.imageHeight
+    : 16 / 9;
+
+const floorPlanStageSize = useMemo(() => {
+  const availableWidth = Math.max(0, floorPlanAreaSize.width - (isTablet ? 28 : 14));
+  const availableHeight = Math.max(0, floorPlanAreaSize.height - (isTablet ? 28 : 14));
+
+  if (!availableWidth || !availableHeight) {
+    return { width: 0, height: 0 };
+  }
+
+  const areaRatio = availableWidth / availableHeight;
+
+  if (areaRatio > floorPlanAspectRatio) {
+    return {
+      width: availableHeight * floorPlanAspectRatio,
+      height: availableHeight,
+    };
+  }
+
+  return {
+    width: availableWidth,
+    height: availableWidth / floorPlanAspectRatio,
+  };
+}, [floorPlanAreaSize.height, floorPlanAreaSize.width, floorPlanAspectRatio, isTablet]);
+
+const getFloorPlanMarkerLabel = useCallback((marker: types.FloorPlanMarker) => {
+  const cleanLabel = marker.label.trim();
+  if (cleanLabel) return cleanLabel;
+  if (marker.type === "input") {
+    return floorPlanInputsByPort.get(marker.port)?.name || `Input ${marker.port}`;
+  }
+  return `Output ${marker.port}`;
+}, [floorPlanInputsByPort]);
+
   const [omniIsOn, setOmniIsOn] = useState(false)
   const [groupIsOn, setGroupIsOn] = useState(false)
   const [specialGroup1IsOn, setSpecialGroup1IsOn] = useState(false)
@@ -575,15 +630,15 @@ const [editingFlashOn, setEditingFlashOn] = useState(false)
 
   const SPECIAL_GROUP_COLORS = {
     group1: {
-      base: 'rgba(185, 74, 72, 0.72)',
-      active: 'rgba(232, 122, 118, 0.92)',
+      base: 'rgba(255, 69, 58, 0.36)',
+      active: 'rgba(255, 105, 97, 0.88)',
     },
     group2: {
-      base: 'rgba(63, 111, 182, 0.72)',
-      active: 'rgba(129, 174, 241, 0.92)',
+      base: 'rgba(10, 132, 255, 0.32)',
+      active: 'rgba(100, 210, 255, 0.78)',
     },
-    editFlashOn: styles.palette.cyan,
-    editFlashOff: styles.palette.cyanBase,
+    editFlashOn: styles.palette.primary,
+    editFlashOff: styles.palette.primarySoft,
   } as const
 
   const [loading, setLoading] = useState(true);  // Add loading state
@@ -950,11 +1005,13 @@ useEffect(() => {
               savedInputGroups,
               savedInputGroupNames,
               savedHiddenInputPorts,
+              loadedFloorPlan,
             ] = await Promise.all([
               db.fetchInputs(parsedTemplate),
               db.fetchTemplateInputGroups(parsedTemplate),
               db.fetchTemplateInputGroupNames(parsedTemplate),
               db.fetchTemplateHiddenInputs(parsedTemplate),
+              db.fetchFloorPlan(),
             ]);
             if (cancelled) return;
 
@@ -1021,7 +1078,7 @@ useEffect(() => {
                 restoredIntercomVolumes[intercom.id] ?? 1
               );
             });
-            const activatedIntercoms = parsedTemplate?.isTabMaster
+            const activatedIntercoms = parsedTemplate?.isTabMaster || parsedTemplate?.isFloorPlan
               ? []
               : Array.isArray(profileState.activeIntercoms)
                 ? profileState.activeIntercoms
@@ -1029,6 +1086,7 @@ useEffect(() => {
             if (cancelled) return;
 
             setInputInfoList(inputs);
+            setFloorPlan(loadedFloorPlan);
             setHiddenInputPorts(validHiddenInputPorts);
             setSpecialInputGroups(savedInputGroups);
             setIntercomInfoList(parsedTemplate.intercomInfo)
@@ -1038,7 +1096,7 @@ useEffect(() => {
             setSpecialGroup1IsOn(false);
             setSpecialGroup2IsOn(false);
 
-            if (!parsedTemplate?.isTabMaster) {
+            if (!parsedTemplate?.isTabMaster && !parsedTemplate?.isFloorPlan) {
               toggleActivatedIntercoms(activatedIntercoms, parsedTemplate);
             }
 
@@ -1062,6 +1120,7 @@ useEffect(() => {
     db.chosenTemplateSetter = setChosenTemplate
     db.intercomOmniListSetter = setIntercomOmniList
     db.intercomGroupListSetter = setIntercomGroupList
+    db.floorPlanSetter = setFloorPlan
 
     return () => {
       cancelled = true;
@@ -1081,6 +1140,9 @@ useEffect(() => {
       }
       if (db.intercomGroupListSetter === setIntercomGroupList) {
         db.intercomGroupListSetter = null;
+      }
+      if (db.floorPlanSetter === setFloorPlan) {
+        db.floorPlanSetter = null;
       }
 
       if (
@@ -1143,7 +1205,7 @@ const renderSpecialGroupButtonWithEditor = (groupKey: 'group1' | 'group2') => {
             maxWidth: 64,
             backgroundColor: styles.palette.control,
             borderWidth: 1,
-            borderColor: styles.palette.borderStrong,
+            borderColor: styles.palette.border,
             borderRadius: 8,
             justifyContent: 'center',
             paddingHorizontal: 8,
@@ -1534,6 +1596,95 @@ const clearAllInputs = () => {
   });
 };
 
+const handleFloorPlanMarkerPress = (marker: types.FloorPlanMarker) => {
+  if (!chosenTemplate) return;
+
+  if (marker.type === "input") {
+    const isCurrentlyOn = !!inputToggleStates[marker.port];
+
+    setInputToggleStates(previousStates => ({
+      ...previousStates,
+      [marker.port]: !isCurrentlyOn,
+    }));
+
+    if (isCurrentlyOn) {
+      db.sendInputOff(
+        chosenTemplate,
+        marker.port,
+        false,
+        false
+      );
+    } else {
+      db.sendInputOn(
+        chosenTemplate,
+        marker.port,
+        false
+      );
+    }
+
+    return;
+  }
+
+  const isCurrentlyOn = !!floorPlanOutputToggleStates[marker.port];
+
+  setFloorPlanOutputToggleStates(previousStates => ({
+    ...previousStates,
+    [marker.port]: !isCurrentlyOn,
+  }));
+
+  if (isCurrentlyOn) {
+    db.sendFloorPlanOutputOff(chosenTemplate, marker.port);
+  } else {
+    db.sendFloorPlanOutputOn(chosenTemplate, marker.port);
+  }
+};
+
+const clearAllFloorPlan = () => {
+  if (!chosenTemplate) return;
+
+  const markerInputPorts = Array.from(new Set(
+    floorPlan.markers
+      .filter(marker => marker.type === "input")
+      .map(marker => marker.port)
+  ));
+
+  const activeInputPorts = Object.entries(inputToggleStates)
+    .filter(([, active]) => active)
+    .map(([port]) => Number(port))
+    .filter(port => Number.isFinite(port) && port > 0);
+
+  Array.from(new Set([...markerInputPorts, ...activeInputPorts])).forEach(port => {
+    db.sendInputOff(
+      chosenTemplate,
+      port,
+      false,
+      false
+    );
+  });
+
+  const markerOutputPorts = Array.from(new Set(
+    floorPlan.markers
+      .filter(marker => marker.type === "output")
+      .map(marker => marker.port)
+  ));
+
+  const activeOutputPorts = Object.entries(floorPlanOutputToggleStates)
+    .filter(([, active]) => active)
+    .map(([port]) => Number(port))
+    .filter(port => Number.isFinite(port) && port > 0);
+
+  Array.from(new Set([...markerOutputPorts, ...activeOutputPorts])).forEach(port => {
+    db.sendFloorPlanOutputOff(chosenTemplate, port);
+  });
+
+  setInputToggleStates({});
+  setFloorPlanOutputToggleStates({});
+  setSpecialGroup1IsOn(false);
+  setSpecialGroup2IsOn(false);
+  setOmniIsOn(false);
+  setGroupIsOn(false);
+};
+
   const toggleActivatedIntercoms = (
     activatedIntercoms: Array<{ id: number; port: number; type: string }>,
     templateInfo: types.TemplateInfo | undefined = chosenTemplate
@@ -1670,8 +1821,17 @@ const clearAllInputs = () => {
       }
     });
 
+    Array.from(new Set(
+      floorPlan.markers
+        .filter(marker => marker.type === "output")
+        .map(marker => marker.port)
+    )).forEach(port => {
+      db.sendFloorPlanOutputOff(templateInfo, port);
+    });
+
     setInputToggleStates({});
     setIntercomToggleStates({});
+    setFloorPlanOutputToggleStates({});
     setSpecialGroup1IsOn(false);
     setSpecialGroup2IsOn(false);
     setOmniIsOn(false);
@@ -1718,9 +1878,10 @@ const clearAllInputs = () => {
       getProfileListenActive(profileState, templateInfo)
     );
 
-    if (templateInfo.isTabMaster) {
+    if (templateInfo.isTabMaster || templateInfo.isFloorPlan) {
       setInputToggleStates({});
       setIntercomToggleStates({});
+      setFloorPlanOutputToggleStates({});
       return;
     }
 
@@ -1737,7 +1898,7 @@ const clearAllInputs = () => {
   const handleSelectProfile = async (
     profile: types.TemplateProfile
   ) => {
-    if (!chosenTemplate || profileBusy || !isTablet) return;
+    if (!chosenTemplate || profileBusy || (!isTablet && !chosenTemplate.isFloorPlan)) return;
 
     setProfileBusy(true);
     setProfileActionError(null);
@@ -1755,7 +1916,7 @@ const clearAllInputs = () => {
   };
 
   const handleCreateProfile = async () => {
-    if (!chosenTemplate || profileBusy || !isTablet) return;
+    if (!chosenTemplate || profileBusy || (!isTablet && !chosenTemplate.isFloorPlan)) return;
 
     if (templateProfiles.length >= PROFILE_LIMIT) {
       setProfileActionError(`A template can have a maximum of ${PROFILE_LIMIT} profiles`);
@@ -2003,6 +2164,33 @@ useEffect(() => {
 
 
 }, [inputInfoList, intercomInfoList]);
+
+useEffect(() => {
+  const validOutputPorts = new Set(
+    floorPlan.markers
+      .filter(marker => marker.type === "output")
+      .map(marker => marker.port)
+  );
+
+  setFloorPlanOutputToggleStates(previousStates => {
+    const nextStates: { [port: number]: boolean } = {};
+
+    Object.entries(previousStates).forEach(([portString, active]) => {
+      const port = Number(portString);
+
+      if (validOutputPorts.has(port)) {
+        nextStates[port] = active;
+        return;
+      }
+
+      if (active && chosenTemplate) {
+        db.sendFloorPlanOutputOff(chosenTemplate, port);
+      }
+    });
+
+    return nextStates;
+  });
+}, [chosenTemplate, db, floorPlan.markers]);
   
 
 
@@ -2038,6 +2226,164 @@ useEffect(() => {
     }
   };
 
+const renderIconLabel = (
+  iconName: IoniconName,
+  label: string,
+  fontSize: number,
+  iconSize = Math.max(fontSize + 4, 14)
+) => (
+  <View
+    style={{
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 4,
+      maxWidth: "100%",
+    }}
+  >
+    <Ionicons name={iconName} size={iconSize} color={styles.palette.text} />
+    <Text
+      style={[styles.generalStyles.text, { fontSize }]}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.72}
+    >
+      {label}
+    </Text>
+  </View>
+);
+
+const renderModalActionButton = (
+  label: string,
+  onPress: () => void,
+  iconName: IoniconName,
+  tone: "default" | "primary" = "default"
+) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => [
+      styles.generalStyles.button,
+      {
+        flex: 0,
+        minWidth: 128,
+        maxWidth: 190,
+        minHeight: 42,
+        paddingHorizontal: 14,
+        backgroundColor: tone === "primary"
+          ? styles.palette.primary
+          : styles.palette.control,
+        borderWidth: tone === "primary" ? 0 : 1,
+        borderColor: styles.palette.border,
+      },
+      pressed && {
+        backgroundColor: tone === "primary"
+          ? styles.palette.primaryPressed
+          : styles.palette.controlPressed,
+        transform: [{ scale: 0.985 }],
+      },
+    ]}
+  >
+    {renderIconLabel(iconName, label, 13, 17)}
+  </Pressable>
+);
+
+const renderStateScreen = (
+  title: string,
+  iconName: IoniconName,
+  accentColor: string
+) => (
+  <GestureHandlerRootView style={{ flex: 1 }}>
+    <SafeAreaView style={styles.generalStyles.safeContainer}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: styles.palette.appBg,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 18,
+          overflow: "hidden",
+        }}
+      >
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: -60,
+            top: "22%",
+            width: "72%",
+            height: 70,
+            borderRadius: 8,
+            backgroundColor: styles.palette.primarySoft,
+            transform: [{ rotate: "-12deg" }],
+          }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            right: -40,
+            bottom: "23%",
+            width: "60%",
+            height: 62,
+            borderRadius: 8,
+            backgroundColor: styles.palette.coralSoft,
+            transform: [{ rotate: "12deg" }],
+          }}
+        />
+
+        <BlurView
+          intensity={36}
+          tint="dark"
+          style={{
+            width: "82%",
+            maxWidth: 440,
+            minHeight: 180,
+            backgroundColor: "rgba(23,25,34,0.86)",
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: styles.palette.highlight,
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 22,
+            overflow: "hidden",
+          }}
+        >
+          <View
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 8,
+              borderWidth: 2,
+              borderColor: accentColor,
+              justifyContent: "center",
+              alignItems: "center",
+              marginBottom: 14,
+              backgroundColor: styles.palette.panelDeep,
+            }}
+          >
+            <Ionicons name={iconName} size={34} color={accentColor} />
+          </View>
+          <Text
+            style={[
+              styles.generalStyles.text,
+              {
+                fontSize: 28,
+                fontWeight: "800",
+                color: styles.palette.text,
+              },
+            ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.72}
+          >
+            {title}
+          </Text>
+        </BlurView>
+      </View>
+    </SafeAreaView>
+  </GestureHandlerRootView>
+);
+
 const renderProfileButton = (
   extraStyle: any = {},
   textSize = 12
@@ -2059,15 +2405,22 @@ const renderProfileButton = (
       setProfileModalVisible(true);
     }}
   >
-    <Text
-      style={[
-        styles.generalStyles.text,
-        { fontSize: textSize, textAlign: "center" },
-      ]}
-      numberOfLines={1}
-    >
-      Profile
-    </Text>
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}>
+      <Ionicons
+        name="person-circle-outline"
+        size={Math.max(textSize + 4, 14)}
+        color={styles.palette.text}
+      />
+      <Text
+        style={[
+          styles.generalStyles.text,
+          { fontSize: textSize, textAlign: "center" },
+        ]}
+        numberOfLines={1}
+      >
+        Profile
+      </Text>
+    </View>
     <Text
       style={[
         styles.generalStyles.text,
@@ -2082,8 +2435,11 @@ const renderProfileButton = (
 );
 
 const renderProfileModal = () => {
+  const profilesEditable =
+    isTablet ||
+    chosenTemplate?.isFloorPlan === true;
   const canCreateProfile =
-    isTablet &&
+    profilesEditable &&
     templateProfiles.length < PROFILE_LIMIT;
 
   return (
@@ -2103,9 +2459,9 @@ const renderProfileModal = () => {
             width: 600,
             maxWidth: "92%",
             maxHeight: "88%",
-            backgroundColor: styles.palette.panelRaised,
+            backgroundColor: styles.palette.panel,
             borderWidth: 1,
-            borderColor: styles.palette.borderStrong,
+            borderColor: styles.palette.border,
             borderRadius: 8,
             padding: 16,
           }}
@@ -2145,12 +2501,12 @@ const renderProfileModal = () => {
                   key={profile.id}
                   style={{
                     backgroundColor: isActive
-                      ? styles.palette.cyanBase
+                      ? styles.palette.primarySoft
                       : styles.palette.control,
                     borderWidth: 1,
                     borderColor: isActive
-                      ? styles.palette.cyan
-                      : styles.palette.borderStrong,
+                      ? styles.palette.primary
+                      : styles.palette.border,
                     borderRadius: 8,
                     padding: 8,
                     opacity: profileBusy && !isActive ? 0.65 : 1,
@@ -2168,10 +2524,10 @@ const renderProfileModal = () => {
                         placeholderTextColor={styles.palette.textMuted}
                         style={{
                           height: 40,
-                          backgroundColor: styles.palette.appBg,
+                          backgroundColor: styles.palette.controlSoft,
                           color: styles.palette.text,
                           borderWidth: 1,
-                          borderColor: styles.palette.borderStrong,
+                          borderColor: styles.palette.border,
                           borderRadius: 8,
                           paddingHorizontal: 12,
                           fontSize: 15,
@@ -2198,9 +2554,7 @@ const renderProfileModal = () => {
                             },
                           ]}
                         >
-                          <Text style={styles.generalStyles.text}>
-                            Save
-                          </Text>
+                          {renderIconLabel("checkmark-circle-outline", "Save", 13, 17)}
                         </Pressable>
                         <Pressable
                           disabled={profileBusy}
@@ -2219,9 +2573,7 @@ const renderProfileModal = () => {
                             },
                           ]}
                         >
-                          <Text style={styles.generalStyles.text}>
-                            Cancel
-                          </Text>
+                          {renderIconLabel("close-circle-outline", "Cancel", 13, 17)}
                         </Pressable>
                       </View>
                     </View>
@@ -2257,17 +2609,24 @@ const renderProfileModal = () => {
                           {profile.name}
                         </Text>
                         {isActive && (
-                          <Text
-                            style={[
-                              styles.generalStyles.text,
-                              {
-                                fontSize: 10,
-                                color: styles.palette.textMuted,
-                              },
-                            ]}
-                          >
-                            Active
-                          </Text>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                            <Ionicons
+                              name="checkmark-circle-outline"
+                              size={12}
+                              color={styles.palette.greenSolid}
+                            />
+                            <Text
+                              style={[
+                                styles.generalStyles.text,
+                                {
+                                  fontSize: 10,
+                                  color: styles.palette.textMuted,
+                                },
+                              ]}
+                            >
+                              Active
+                            </Text>
+                          </View>
                         )}
                       </Pressable>
 
@@ -2287,14 +2646,7 @@ const renderProfileModal = () => {
                               },
                             ]}
                           >
-                            <Text
-                              style={[
-                                styles.generalStyles.text,
-                                { fontSize: 11 },
-                              ]}
-                            >
-                              Rename
-                            </Text>
+                            {renderIconLabel("create-outline", "Rename", 10, 14)}
                           </Pressable>
                           <Pressable
                             disabled={profileBusy}
@@ -2311,14 +2663,7 @@ const renderProfileModal = () => {
                               },
                             ]}
                           >
-                            <Text
-                              style={[
-                                styles.generalStyles.text,
-                                { fontSize: 11 },
-                              ]}
-                            >
-                              Delete
-                            </Text>
+                            {renderIconLabel("trash-outline", "Delete", 10, 14)}
                           </Pressable>
                         </>
                       )}
@@ -2332,7 +2677,7 @@ const renderProfileModal = () => {
           <View
             style={{
               height: 1,
-              backgroundColor: styles.palette.borderStrong,
+              backgroundColor: styles.palette.separator,
               marginVertical: 12,
               opacity: 0.65,
             }}
@@ -2353,10 +2698,10 @@ const renderProfileModal = () => {
             placeholderTextColor={styles.palette.textMuted}
             style={{
               height: 42,
-              backgroundColor: styles.palette.appBg,
+              backgroundColor: styles.palette.controlSoft,
               color: styles.palette.text,
               borderWidth: 1,
-              borderColor: styles.palette.borderStrong,
+              borderColor: styles.palette.border,
               borderRadius: 8,
               paddingHorizontal: 12,
               fontSize: 15,
@@ -2403,9 +2748,11 @@ const renderProfileModal = () => {
                 },
               ]}
             >
-              <Text style={styles.generalStyles.text}>
-                {profileBusy ? "Saving..." : "Create"}
-              </Text>
+              {profileBusy ? (
+                <Text style={styles.generalStyles.text}>Saving...</Text>
+              ) : (
+                renderIconLabel("add-circle-outline", "Create", 13, 17)
+              )}
             </Pressable>
 
             <Pressable
@@ -2426,12 +2773,398 @@ const renderProfileModal = () => {
                 },
               ]}
             >
-              <Text style={styles.generalStyles.text}>Close</Text>
+              {renderIconLabel("close-circle-outline", "Close", 13, 17)}
             </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>
+  );
+};
+
+const renderListenVolumeModal = () => (
+  <Modal
+    visible={listenVolumeModalVisible}
+    transparent
+    animationType="none"
+    onRequestClose={() => setListenVolumeModalVisible(false)}
+    supportedOrientations={["landscape", "landscape-left", "landscape-right"]}
+  >
+    <View
+      style={{
+        ...styles.modalStyles.overlay,
+      }}
+    >
+      <View
+        style={{
+          ...styles.modalStyles.compactContent,
+        }}
+      >
+        <Text style={styles.modalStyles.title}>
+          All Inputs Volume: {(allInputsSliderValue * 100).toFixed(0)}%
+        </Text>
+        <Slider
+          style={styles.modalStyles.slider}
+          minimumValue={0}
+          maximumValue={2}
+          value={allInputsSliderValue}
+          onValueChange={handleAllInputsVolumeChange}
+          step={0.01}
+        />
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          {renderModalActionButton(
+            "Reset",
+            handleResetInputVolumes,
+            "refresh-circle-outline"
+          )}
+          {renderModalActionButton(
+            "Close",
+            () => setListenVolumeModalVisible(false),
+            "close-circle-outline",
+            "primary"
+          )}
+        </View>
+      </View>
+    </View>
+  </Modal>
+);
+
+const renderFloorPlanFooter = () => {
+  const footerButtonHeight = isTablet ? 62 : PHONE_FOOTER_BUTTON_HEIGHT;
+  const footerTextSize = isTablet ? 13 : PHONE_FOOTER_TEXT_SIZE;
+  const footerSmallTextSize = isTablet ? 11 : PHONE_FOOTER_SMALL_TEXT_SIZE;
+
+  return (
+    <View
+      style={{
+        ...styles.generalStyles.buttonContainer,
+        flexDirection: "row",
+        justifyContent: "space-evenly",
+        gap: 6,
+        flex: isTablet ? 0.58 : 0.55,
+      }}
+    >
+      <Pressable
+        style={[
+          styles.generalStyles.button,
+          !listenDisabled && styles.getInfoViewPressableStyleInput(isMuted),
+          listenDisabled && { backgroundColor: styles.palette.controlSoft },
+          {
+            flex: 0,
+            height: footerButtonHeight,
+            width: isTablet ? 140 : "20%",
+            maxWidth: isTablet ? 140 : "20%",
+            minWidth: isTablet ? 126 : "16%",
+            justifyContent: "center",
+            alignItems: "center",
+            paddingHorizontal: 4,
+          },
+        ]}
+        onPress={listenDisabled ? undefined : handleToggleMute}
+        onLongPress={() => setListenVolumeModalVisible(true)}
+      >
+        {!listenDisabled && (
+          renderIconLabel(
+            isMuted ? "volume-high-outline" : "volume-mute-outline",
+            "Listen",
+            footerTextSize,
+            footerTextSize + 5
+          )
+        )}
+        <Text style={{ ...styles.generalStyles.text, fontSize: footerSmallTextSize }} numberOfLines={1}>
+          {(allInputsSliderValue * 100).toFixed(0)}%
+        </Text>
+      </Pressable>
+
+      <View
+        style={{
+          ...styles.generalStyles.timecode,
+          flex: 0,
+          height: footerButtonHeight,
+          width: isTablet ? 220 : "34%",
+          maxWidth: isTablet ? 220 : "34%",
+          minWidth: isTablet ? 190 : "28%",
+          paddingHorizontal: 6,
+        }}
+      >
+        <Text style={[styles.generalStyles.text, { fontSize: footerTextSize }]} numberOfLines={1}>
+          {chosenTemplate?.name || "Name Unknown"}
+        </Text>
+        <TimecodeValue
+          style={{ ...styles.generalStyles.text, width: "100%", fontSize: footerSmallTextSize }}
+          numberOfLines={1}
+        />
+      </View>
+
+      {renderProfileButton({
+        flex: 0,
+        height: footerButtonHeight,
+        width: isTablet ? 130 : "20%",
+        maxWidth: isTablet ? 130 : "20%",
+        minWidth: isTablet ? 116 : "16%",
+        paddingHorizontal: 3,
+      }, footerSmallTextSize)}
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.generalStyles.button,
+          pressed && styles.generalStyles.buttonPressed,
+          {
+            flex: 0,
+            height: footerButtonHeight,
+            width: isTablet ? 140 : "20%",
+            maxWidth: isTablet ? 140 : "20%",
+            minWidth: isTablet ? 126 : "16%",
+            justifyContent: "center",
+            alignItems: "center",
+            paddingHorizontal: 3,
+          },
+        ]}
+        onPress={clearAllFloorPlan}
+      >
+        {renderIconLabel("close-circle-outline", "Clear", footerSmallTextSize, footerSmallTextSize + 5)}
+      </Pressable>
+    </View>
+  );
+};
+
+const renderFloorPlanView = () => {
+  const markerWidth = isTablet ? 118 : 86;
+  const markerHeight = isTablet ? 58 : 44;
+  const markerTextSize = isTablet ? 13 : 10;
+  const markerSmallTextSize = isTablet ? 10 : 8;
+  const stageReady =
+    floorPlanStageSize.width > 0 &&
+    floorPlanStageSize.height > 0 &&
+    !!floorPlan.image;
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.generalStyles.safeContainer}>
+        <View style={styles.generalStyles.container}>
+          <BlurView
+            intensity={34}
+            tint="dark"
+            style={{
+              minHeight: isTablet ? 66 : 54,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              backgroundColor: styles.palette.chrome,
+              borderWidth: 1,
+              borderColor: styles.palette.border,
+              borderRadius: 8,
+              paddingHorizontal: isTablet ? 14 : 10,
+              marginBottom: 7,
+              overflow: "hidden",
+            }}
+          >
+            <View
+              style={{
+                width: isTablet ? 42 : 34,
+                height: isTablet ? 42 : 34,
+                borderRadius: 8,
+                backgroundColor: styles.palette.panelDeep,
+                borderWidth: 1,
+                borderColor: styles.palette.highlight,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="map-outline" size={isTablet ? 24 : 19} color={styles.palette.primary} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text
+                style={[
+                  styles.generalStyles.text,
+                  {
+                    fontSize: isTablet ? 18 : 13,
+                    fontWeight: "800",
+                    textAlign: "left",
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                Floor Plan
+              </Text>
+              <Text
+                style={[
+                  styles.generalStyles.text,
+                  {
+                    fontSize: isTablet ? 12 : 9,
+                    color: styles.palette.textMuted,
+                    textAlign: "left",
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {chosenTemplate?.name || "Name Unknown"}
+              </Text>
+            </View>
+            <TimecodeValue
+              style={{
+                ...styles.generalStyles.text,
+                fontSize: isTablet ? 18 : 12,
+                textAlign: "right",
+                minWidth: isTablet ? 110 : 78,
+              }}
+              numberOfLines={1}
+            />
+          </BlurView>
+
+          <View
+            onLayout={(event: LayoutChangeEvent) => {
+              const { width, height } = event.nativeEvent.layout;
+              setFloorPlanAreaSize({ width, height });
+            }}
+            style={{
+              flex: 5,
+              backgroundColor: styles.palette.groupedBg,
+              alignItems: "center",
+              justifyContent: "center",
+              padding: isTablet ? 14 : 7,
+            }}
+          >
+            {stageReady ? (
+              <View
+                style={{
+                  width: floorPlanStageSize.width,
+                  height: floorPlanStageSize.height,
+                  borderWidth: 1,
+                  borderColor: styles.palette.border,
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  position: "relative",
+                  backgroundColor: styles.palette.panel,
+                  shadowColor: styles.palette.primary,
+                  shadowOpacity: 0.16,
+                  shadowRadius: 16,
+                  shadowOffset: { width: 0, height: 8 },
+                  elevation: 4,
+                }}
+              >
+                <Image
+                  source={{ uri: floorPlan.image }}
+                  resizeMode="stretch"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                  }}
+                />
+
+                {floorPlan.markers.map(marker => {
+                  const isActive =
+                    marker.type === "input"
+                      ? !!inputToggleStates[marker.port]
+                      : !!floorPlanOutputToggleStates[marker.port];
+                  const inactiveColor =
+                    marker.type === "input"
+                      ? styles.palette.primarySoft
+                      : "rgba(255, 159, 10, 0.30)";
+                  const activeColor =
+                    marker.type === "input"
+                      ? styles.palette.green
+                      : styles.palette.warning;
+                  const activeBorderColor =
+                    marker.type === "input"
+                      ? styles.palette.greenSolid
+                      : styles.palette.warning;
+
+                  return (
+                    <Pressable
+                      key={marker.id}
+                      onPress={() => handleFloorPlanMarkerPress(marker)}
+                      style={({ pressed }) => ({
+                        position: "absolute",
+                        left: marker.x * floorPlanStageSize.width - markerWidth / 2,
+                        top: marker.y * floorPlanStageSize.height - markerHeight / 2,
+                        width: markerWidth,
+                        minHeight: markerHeight,
+                        borderRadius: 8,
+                        borderWidth: isActive ? 2 : 1,
+                        borderColor: isActive ? activeBorderColor : styles.palette.border,
+                        backgroundColor: isActive ? activeColor : inactiveColor,
+                        justifyContent: "center",
+                        alignItems: "center",
+                        paddingHorizontal: 6,
+                        paddingVertical: 4,
+                        opacity: pressed ? 0.82 : 1,
+                        transform: [{ scale: pressed ? 0.985 : 1 }],
+                        shadowColor: isActive ? activeBorderColor : "#000",
+                        shadowOpacity: isActive ? 0.34 : 0.2,
+                        shadowRadius: isActive ? 12 : 8,
+                        shadowOffset: { width: 0, height: 3 },
+                        elevation: 3,
+                      })}
+                    >
+                      <Text
+                        style={[
+                          styles.generalStyles.text,
+                          { fontSize: markerTextSize, color: styles.palette.text },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {getFloorPlanMarkerLabel(marker)}
+                      </Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                        <Ionicons
+                          name={marker.type === "input" ? "mic-outline" : "volume-high-outline"}
+                          size={markerSmallTextSize + 4}
+                          color={styles.palette.text}
+                          style={{ opacity: 0.82 }}
+                        />
+                        <Text
+                          style={[
+                            styles.generalStyles.text,
+                            {
+                              fontSize: markerSmallTextSize,
+                              color: styles.palette.text,
+                              opacity: 0.82,
+                            },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {marker.type === "input" ? "Input" : "Output"} {marker.port}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  width: "100%",
+                  borderWidth: 1,
+                  borderColor: styles.palette.border,
+                  borderRadius: 8,
+                  backgroundColor: styles.palette.panel,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons
+                  name="map-outline"
+                  size={isTablet ? 34 : 24}
+                  color={styles.palette.textMuted}
+                  style={{ marginBottom: 8 }}
+                />
+                <Text style={[styles.generalStyles.text, { fontSize: isTablet ? 24 : 16 }]}>
+                  No floor plan
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {generalComponent.getSelectorLineBreak()}
+          {renderFloorPlanFooter()}
+        </View>
+
+        {renderListenVolumeModal()}
+        {renderProfileModal()}
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 };
 
@@ -2559,44 +3292,21 @@ const renderTabMasterFooter = () => (
         ]}
         onPress={clearAllInputs}
       >
-        <Text
-          style={[
-            styles.generalStyles.text,
-            { fontSize: 16, textAlign: "center" },
-          ]}
-        >
-          Clear all
-        </Text>
+        {renderIconLabel("close-circle-outline", "Clear all", 16, 20)}
       </Pressable>
     </View>
   </View>
 );
 
   if (!isAppActive || !isFocused) {
-    return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView style={styles.generalStyles.safeContainer}>
-        <View style={{ ...styles.generalStyles.container, alignItems: "center", justifyContent: "center" }}>
-          <Text style={styles.generalStyles.text}>Paused</Text>
-        </View>
-      </SafeAreaView>
-    </GestureHandlerRootView>
-    );
+    return renderStateScreen("Paused", "pause-circle-outline", styles.palette.amber);
   }
 
   if (loading){
-    return (
-      <GestureHandlerRootView>
-      <SafeAreaView style={styles.generalStyles.safeContainer}>
-
-        <View style={{...styles.generalStyles.container, alignContent: "center", justifyContent: "center", alignItems: "center"}}>
-          <View style={{alignContent: "center", justifyContent: "center", alignItems: "center"}}>
-            <Text style={{...styles.generalStyles.text, fontSize: 30}}>Loading...</Text>
-          </View>
-        </View>
-      </SafeAreaView>
-    </GestureHandlerRootView>
-    )
+    return renderStateScreen("Loading", "pulse-outline", styles.palette.primary);
+  }
+  if (chosenTemplate?.isFloorPlan) {
+    return renderFloorPlanView();
   }
   if (isTablet) return (
   <GestureHandlerRootView style={{ flex: 1 }}>
@@ -2715,7 +3425,7 @@ const renderTabMasterFooter = () => (
       }
     }}
   >
-    <Text style={styles.generalStyles.text}>{chosenTemplate?.groupName}</Text>
+    {renderIconLabel("radio-outline", chosenTemplate?.groupName ?? "", 12, 16)}
   </Pressable>
 
   <Pressable
@@ -2740,7 +3450,7 @@ const renderTabMasterFooter = () => (
       }
     }}
   >
-    <Text style={styles.generalStyles.text}>{chosenTemplate?.omniName}</Text>
+    {renderIconLabel("people-outline", chosenTemplate?.omniName ?? "", 12, 16)}
   </Pressable>
   </View>
   </View>
@@ -2748,7 +3458,7 @@ const renderTabMasterFooter = () => (
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: styles.palette.borderStrong,
+      backgroundColor: styles.palette.separator,
       marginHorizontal: 3,
       opacity: 0.6,
     }}
@@ -2777,7 +3487,7 @@ const renderTabMasterFooter = () => (
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: styles.palette.borderStrong,
+      backgroundColor: styles.palette.separator,
       marginHorizontal: 2,
       opacity: 0.6,
     }}
@@ -2835,9 +3545,12 @@ const renderTabMasterFooter = () => (
       }
     }}
   >
-    <Text style={[styles.generalStyles.text, { fontSize: inputReorderMode ? 11 : 12 }]}>
-      {inputReorderMode ? "Done" : "Edit"}
-    </Text>
+    {renderIconLabel(
+      inputReorderMode ? "checkmark-circle-outline" : "create-outline",
+      inputReorderMode ? "Done" : "Edit",
+      inputReorderMode ? 10 : 11,
+      14
+    )}
   </Pressable>
 
   {inputReorderMode && (
@@ -2866,17 +3579,7 @@ const renderTabMasterFooter = () => (
         setInputDeleteMode(previous => !previous);
       }}
     >
-      <Text
-        style={[
-          styles.generalStyles.text,
-          {
-            fontSize: 10,
-            textAlign: 'center',
-          },
-        ]}
-      >
-        Hide/show
-      </Text>
+      {renderIconLabel("eye-off-outline", "Hide", 10, 13)}
       </Pressable>
   )}
   </View>
@@ -2885,7 +3588,7 @@ const renderTabMasterFooter = () => (
     style={{
       width: 1,
       height: '70%',
-      backgroundColor: styles.palette.borderStrong,
+      backgroundColor: styles.palette.separator,
       opacity: 0.6,
     }}
   />
@@ -2934,7 +3637,12 @@ const renderTabMasterFooter = () => (
     onLongPress={() => setListenVolumeModalVisible(true)}
   >
     {!listenDisabled && (
-      <Text style={[styles.generalStyles.text, { fontSize: 11 }]}>Listen</Text>
+      renderIconLabel(
+        isMuted ? "volume-high-outline" : "volume-mute-outline",
+        "Listen",
+        10,
+        14
+      )
     )}
     <Text style={{ ...styles.generalStyles.text, fontSize: 10 }}>
       {(allInputsSliderValue * 100).toFixed(0)}%
@@ -2959,7 +3667,7 @@ const renderTabMasterFooter = () => (
     ]}
     onPress={clearAllInputs}
   >
-    <Text style={[styles.generalStyles.text, { fontSize: 11 }]}>Clear all</Text>
+    {renderIconLabel("close-circle-outline", "Clear", 10, 14)}
   </Pressable>
 </View>
             </View>
@@ -2997,11 +3705,18 @@ const renderTabMasterFooter = () => (
                 onValueChange={handleAllInputsVolumeChange}
                 step={0.01}
               />
-              <View style={{ flexDirection: "row" }}>
-                <View style={{ marginRight: 12 }}>
-                  <Button title="Reset volumes" onPress={handleResetInputVolumes} />
-                </View>
-                <Button title="Close" onPress={() => setListenVolumeModalVisible(false)} />
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {renderModalActionButton(
+                  "Reset",
+                  handleResetInputVolumes,
+                  "refresh-circle-outline"
+                )}
+                {renderModalActionButton(
+                  "Close",
+                  () => setListenVolumeModalVisible(false),
+                  "close-circle-outline",
+                  "primary"
+                )}
               </View>
             </View>
           </View>
@@ -3019,18 +3734,18 @@ const renderTabMasterFooter = () => (
               flex: 1,
               justifyContent: 'flex-start',
               alignItems: 'center',
-              backgroundColor: 'rgba(0,0,0,0.68)',
+              backgroundColor: 'rgba(0,0,0,0.58)',
             }}
           >
             <View
               style={{
                 width: '88%',
-                backgroundColor: styles.palette.panelRaised,
+                backgroundColor: styles.palette.panel,
                 borderRadius: 8,
                 padding: 16,
                 marginBottom: Platform.OS === 'ios' ? 12 : 24,
                 borderWidth: 1,
-                borderColor: styles.palette.borderStrong,
+                borderColor: styles.palette.border,
               }}
             >
               <Text
@@ -3057,10 +3772,10 @@ const renderTabMasterFooter = () => (
                 placeholderTextColor={styles.palette.textMuted}
                 style={{
                   height: 44,
-                  backgroundColor: styles.palette.appBg,
+                  backgroundColor: styles.palette.controlSoft,
                   color: styles.palette.text,
                   borderWidth: 1,
-                  borderColor: styles.palette.borderStrong,
+                  borderColor: styles.palette.border,
                   borderRadius: 8,
                   paddingHorizontal: 12,
                   fontSize: 16,
@@ -3249,15 +3964,12 @@ const renderTabMasterFooter = () => (
                               }
                             }}
                           >
-                            <Text
-                              style={[
-                                styles.generalStyles.text,
-                                { fontSize: inputReorderMode ? PHONE_FOOTER_SMALL_TEXT_SIZE : PHONE_FOOTER_TEXT_SIZE },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {inputReorderMode ? "Done" : "Edit"}
-                            </Text>
+                            {renderIconLabel(
+                              inputReorderMode ? "checkmark-circle-outline" : "create-outline",
+                              inputReorderMode ? "Done" : "Edit",
+                              inputReorderMode ? PHONE_FOOTER_SMALL_TEXT_SIZE : PHONE_FOOTER_TEXT_SIZE,
+                              12
+                            )}
                           </Pressable>
 
                           {inputReorderMode && (
@@ -3287,18 +3999,7 @@ const renderTabMasterFooter = () => (
                                 setInputDeleteMode(previous => !previous);
                               }}
                             >
-                              <Text
-                                style={[
-                                  styles.generalStyles.text,
-                                  {
-                                    fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE,
-                                    textAlign: "center",
-                                  },
-                                ]}
-                                numberOfLines={1}
-                              >
-                                Hide/show
-                              </Text>
+                              {renderIconLabel("eye-off-outline", "Hide", PHONE_FOOTER_SMALL_TEXT_SIZE, 12)}
                             </Pressable>
                           )}
                         </View>
@@ -3321,9 +4022,12 @@ const renderTabMasterFooter = () => (
                           onLongPress={() => setListenVolumeModalVisible(true)}
                         >
                           {!listenDisabled && (
-                            <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
-                              Listen
-                            </Text>
+                            renderIconLabel(
+                              isMuted ? "volume-high-outline" : "volume-mute-outline",
+                              "Listen",
+                              PHONE_FOOTER_TEXT_SIZE,
+                              12
+                            )
                           )}
                           <Text style={{ ...styles.generalStyles.text, fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE }} numberOfLines={1}>
                             {(allInputsSliderValue * 100).toFixed(0)}%
@@ -3360,9 +4064,7 @@ const renderTabMasterFooter = () => (
                           ]}
                           onPress={clearAllInputs}
                         >
-                          <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE }]} numberOfLines={1}>
-                            Clear all
-                          </Text>
+                          {renderIconLabel("close-circle-outline", "Clear", PHONE_FOOTER_SMALL_TEXT_SIZE, 12)}
                         </Pressable>
                       </View>
                     )}
@@ -3418,9 +4120,7 @@ const renderTabMasterFooter = () => (
                                   handleToggleUnlatchReleaseGroup(setOmniIsOn, omniIsOn, chosenTemplate, intercomOmniList, groupIsOn, intercomGroupList);
                                 }
                               }}>
-                        <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
-                          {chosenTemplate?.groupName}
-                        </Text>
+                        {renderIconLabel("radio-outline", chosenTemplate?.groupName ?? "", PHONE_FOOTER_TEXT_SIZE, 12)}
                       </Pressable>
 
                       <Pressable style={[styles.generalStyles.button, PHONE_GROUP_BUTTON_STYLE, styles.getInfoViewPressableStyleGroup(groupIsOn)]}
@@ -3439,9 +4139,7 @@ const renderTabMasterFooter = () => (
                                   handleToggleUnlatchReleaseGroup(setGroupIsOn, groupIsOn, chosenTemplate, intercomGroupList, omniIsOn, intercomOmniList);
                                 }
                               }}>
-                        <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
-                          {chosenTemplate?.omniName}
-                        </Text>
+                        {renderIconLabel("people-outline", chosenTemplate?.omniName ?? "", PHONE_FOOTER_TEXT_SIZE, 12)}
                       </Pressable>
 
 
@@ -3476,9 +4174,12 @@ const renderTabMasterFooter = () => (
                               onPress={listenDisabled ? undefined : handleToggleMute}
                               onLongPress={() => setListenVolumeModalVisible(true)}>
                         {!listenDisabled && (
-                          <Text style={[styles.generalStyles.text, { fontSize: PHONE_FOOTER_TEXT_SIZE }]} numberOfLines={1}>
-                            Listen
-                          </Text>
+                          renderIconLabel(
+                            isMuted ? "volume-high-outline" : "volume-mute-outline",
+                            "Listen",
+                            PHONE_FOOTER_TEXT_SIZE,
+                            12
+                          )
                         )}
                         <Text style={{...styles.generalStyles.text, fontSize: PHONE_FOOTER_SMALL_TEXT_SIZE}} numberOfLines={1}>
                           {(allInputsSliderValue * 100).toFixed(0)}%

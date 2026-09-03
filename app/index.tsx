@@ -9,6 +9,8 @@ import * as generalComponent from '../scripts/general_scripts/custom_components'
 import { palette } from '../scripts/styles'
 import * as Device from 'expo-device';
 import * as ServiceDiscovery from '@inthepocket/react-native-service-discovery';
+import { BlurView } from 'expo-blur'
+import Ionicons from '@expo/vector-icons/Ionicons'
 
 
 const index = () => {
@@ -112,31 +114,70 @@ const searchForService = () => {
    
   return (
     <SafeAreaView style={styles.safeContainer}>
+      <View style={styles.container}>
+        <View pointerEvents="none" style={styles.backdropLayer}>
+          <View style={styles.backdropBandPrimary} />
+          <View style={styles.backdropBandCoral} />
+          <View style={styles.backdropBandAmber} />
+          <View style={styles.scanlineTop} />
+          <View style={styles.scanlineBottom} />
+        </View>
 
-    <View style={styles.container}>
-      
-      <View style={styles.titleContainer}>
-        <Text   style={[styles.title, !isTablet ? { fontSize:  45} : {fontSize: 90}]}>Pro Selector</Text>
-      </View>
-      <View style={styles.imageContainer}>
-        <Image source={require("../assets/images/gilydlogo.png")} style={styles.image}></Image>
-      </View>
-      <View style={styles.linkContainer}>
-        {/* <Link href="/selektor" style={{ marginHorizontal: "auto" }} asChild> */}
+        <View style={[styles.hero, isTablet && styles.heroTablet]}>
+          <View style={styles.brandColumn}>
+            <View style={styles.brandPill}>
+              <Ionicons name="radio-outline" size={16} color={palette.cyan} />
+              <Text style={styles.brandPillText}>Live Control</Text>
+            </View>
+
+            <Text
+              style={[styles.title, !isTablet ? { fontSize: 47 } : { fontSize: 82 }]}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
+            >
+              Pro Selector
+            </Text>
+
+            <View style={styles.signalRow}>
+              <View style={[styles.signalBar, { backgroundColor: palette.primary }]} />
+              <View style={[styles.signalBar, { backgroundColor: palette.greenSolid }]} />
+              <View style={[styles.signalBar, { backgroundColor: palette.coral }]} />
+            </View>
+          </View>
+
+          <BlurView intensity={34} tint="dark" style={styles.logoStage}>
+            <View style={styles.logoRailLeft} />
+            <View style={styles.logoRailBottom} />
+            <Image source={require("../assets/images/gilydlogo.png")} style={styles.image} />
+          </BlurView>
+        </View>
+
+        <BlurView intensity={38} tint="dark" style={styles.commandDock}>
+          <View style={styles.connectionPill}>
+            <Ionicons
+              name={isButtonDisabled ? "pulse-outline" : "wifi-outline"}
+              size={17}
+              color={isButtonDisabled ? palette.warning : palette.greenSolid}
+            />
+            <Text style={styles.connectionText}>
+              {isButtonDisabled ? "Searching" : "Ready"}
+            </Text>
+          </View>
 
           {generalComponent.getButton({
-            title: "Connect",
+            title: isButtonDisabled ? "Connecting" : "Connect",
             buttonStyle: styles.button,
             textStyle: styles.buttonText,
-            pDefaultButtonBgColor: palette.control,
-            pPressedButtonBgColor: palette.controlPressed,
+            pDefaultButtonBgColor: palette.primary,
+            pPressedButtonBgColor: palette.primaryPressed,
             isDisabled: isButtonDisabled,
+            iconName: "wifi",
+            iconSize: 19,
             onPress: () => searchForService()
           })}
-        {/* </Link>//supportedOrientations={["landscape", 'landscape-left', 'landscape-right']} */}
+        </BlurView>
       </View>
-    </View>
-    
     </SafeAreaView>
   )
 }
@@ -150,90 +191,218 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     backgroundColor: palette.appBg,
     paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingVertical: 14,
+    overflow: 'hidden',
   },
-  titleContainer:{
-    flex: 0.9,
-    flexDirection: "column",
-    alignSelf: 'center',
-    justifyContent: 'flex-end',
-    marginTop: 12,
+  backdropLayer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: palette.appBg,
   },
-  imageContainer:{
-    flex: 1.2,
+  backdropBandPrimary: {
+    position: 'absolute',
+    left: -40,
+    top: 24,
+    width: '72%',
+    height: 78,
+    borderRadius: 8,
+    backgroundColor: palette.primarySoft,
+    transform: [{ rotate: '-12deg' }],
+  },
+  backdropBandCoral: {
+    position: 'absolute',
+    right: -34,
+    top: '26%',
+    width: '52%',
+    height: 66,
+    borderRadius: 8,
+    backgroundColor: palette.coralSoft,
+    transform: [{ rotate: '16deg' }],
+  },
+  backdropBandAmber: {
+    position: 'absolute',
+    left: '18%',
+    bottom: '19%',
+    width: '72%',
+    height: 56,
+    borderRadius: 8,
+    backgroundColor: palette.amberSoft,
+    transform: [{ rotate: '8deg' }],
+  },
+  scanlineTop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '18%',
+    height: 1,
+    backgroundColor: palette.separator,
+  },
+  scanlineBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: '28%',
+    height: 1,
+    backgroundColor: palette.separator,
+  },
+  hero: {
+    flex: 1,
     width: '100%',
     justifyContent: 'center',
-    alignItems: 'center',
+    gap: 18,
   },
-  linkContainer:{
-    flex: 1.3,
-    width: '100%',
-    alignSelf: 'center',
+  heroTablet: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 10,
+    justifyContent: 'space-between',
+    gap: 28,
+  },
+  brandColumn: {
+    minHeight: 160,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 4,
+  },
+  brandPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: palette.panelDeep,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  brandPillText: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0,
   },
   title: {
-    alignSelf: "center",
+    alignSelf: "flex-start",
     color: palette.text,
-    fontSize: 90,
-    fontWeight: "900",
-    textAlign: "center",
+    fontWeight: "800",
+    textAlign: "left",
+    letterSpacing: 0,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+  },
+  signalBar: {
+    width: 46,
+    height: 5,
+    borderRadius: 8,
+  },
+  logoStage: {
+    width: '100%',
+    maxWidth: 460,
+    height: '33%',
+    minHeight: 150,
+    maxHeight: 300,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(23,25,34,0.74)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.highlight,
+    padding: 22,
+    overflow: 'hidden',
+    shadowColor: palette.primary,
+    shadowOpacity: 0.28,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  logoRailLeft: {
+    position: 'absolute',
+    left: 0,
+    top: 18,
+    bottom: 18,
+    width: 5,
+    backgroundColor: palette.cyan,
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+  },
+  logoRailBottom: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    bottom: 0,
+    height: 4,
+    backgroundColor: palette.coral,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  commandDock: {
+    width: '100%',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: palette.chrome,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.highlight,
+    padding: 10,
+    overflow: 'hidden',
+  },
+  connectionPill: {
+    minWidth: 104,
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: palette.panelDeep,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+  },
+  connectionText: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0,
   },
   button: {
-    minWidth: 210,
-    width: '58%',
-    maxWidth: 420,
-    height: 60,
+    flex: 1,
+    minWidth: 0,
+    maxWidth: 520,
+    height: 56,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: palette.control,
-    borderWidth: 1,
-    borderColor: palette.borderStrong,
+    backgroundColor: palette.primary,
+    borderWidth: 0,
+    borderColor: palette.primary,
     paddingHorizontal: 18,
+    shadowColor: palette.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
   },
   buttonText: {
     color: palette.text,
-    fontSize: 16,
-    fontWeight: "800",
+    fontSize: 17,
+    fontWeight: "700",
     textAlign: "center",
+    letterSpacing: 0,
   },
   image:{
         width: "100%",
-        height: "74%",
+        height: "100%",
         resizeMode: "contain"
     },
 })
-
-  const localstyles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.68)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    width: '40%',
-    padding: 20,
-    backgroundColor: palette.panelRaised,
-    borderRadius: 8,
-    borderColor: palette.borderStrong,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  modalTitle: {
-    marginBottom: 10,
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: palette.text,
-  },
-  slider: {
-    width: '100%',
-    height: 40,
-    marginBottom: 20,
-  },
-});

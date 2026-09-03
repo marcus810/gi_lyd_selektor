@@ -1,4 +1,5 @@
-import { View, Modal, Button, Text } from "react-native";
+import { View, Modal, Pressable, Text } from "react-native";
+import Ionicons from '@expo/vector-icons/Ionicons';
 import InfoInputView from "./InfoInputView";
 import InfoOutputView from "./InfoOutputView";
 import React, { useEffect, useState, useMemo, useCallback } from "react";
@@ -19,6 +20,41 @@ import {
   SortableGridRenderItemProps,
 } from "react-native-reanimated-dnd";
 /** -------------------- OUTPUT -------------------- */
+
+const ModalActionButton = ({
+  title,
+  onPress,
+}: {
+  title: string;
+  onPress: () => void;
+}) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => [
+      styles.generalStyles.button,
+      {
+        flex: 0,
+        minWidth: 128,
+        maxWidth: 180,
+        minHeight: 42,
+        paddingHorizontal: 14,
+        backgroundColor: styles.palette.primary,
+        borderWidth: 0,
+      },
+      pressed && {
+        backgroundColor: styles.palette.primaryPressed,
+        transform: [{ scale: 0.985 }],
+      },
+    ]}
+  >
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 }}>
+      <Ionicons name="close-circle-outline" size={17} color={styles.palette.text} />
+      <Text style={[styles.generalStyles.text, { fontSize: 13 }]} numberOfLines={1}>
+        {title}
+      </Text>
+    </View>
+  </Pressable>
+);
 
 type OutputProps = {
   intercomInfo: IntercomInfo[];
@@ -551,9 +587,9 @@ const renderInputTile = (input: InputInfo) => {
   style={{
     width: gridItemSize,
     height: gridItemSize,
-    backgroundColor: "rgba(22, 190, 216, 0.1)",
+    backgroundColor: styles.palette.primarySoft,
     borderWidth: 1,
-    borderColor: styles.palette.cyan,
+    borderColor: styles.palette.primary,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
@@ -653,7 +689,7 @@ const renderInputTile = (input: InputInfo) => {
               onValueChange={handleVolumeChange}
               step={0.01}
             />
-            <Button title="Close" onPress={handleCloseModal} />
+            <ModalActionButton title="Close" onPress={handleCloseModal} />
           </View>
         </View>
       </Modal>

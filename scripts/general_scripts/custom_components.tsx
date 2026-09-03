@@ -1,5 +1,6 @@
 import { View, Text, Pressable } from 'react-native'
-import React, { useState } from 'react'
+import React from 'react'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import * as types from './types'
 import { palette } from '../styles'
 /* all components needs to be capitalised because they are custom react-native components 
@@ -13,33 +14,70 @@ import { palette } from '../styles'
     pDefaultButtonBgColor, 
     pPressedButtonBgColor,
     onPress,
-    isDisabled = false
+    isDisabled = false,
+    iconName,
+    iconColor,
+    iconSize = 18
     }: 
     types.ButtonProps){
       const defaultButtonBgColor = pDefaultButtonBgColor || palette.control
       const pressedButtonBgColor = pPressedButtonBgColor || palette.controlPressed
-      
-      const [buttonBgColor, setButtonBgColor] = useState(defaultButtonBgColor);
+
       return(
         <Pressable 
-        style={[buttonStyle, {backgroundColor: buttonBgColor}]} 
-        onPressIn={() => setButtonBgColor(pressedButtonBgColor)} 
-        onPressOut={() => setButtonBgColor(defaultButtonBgColor)} 
-        onPress={onPress} disabled={isDisabled}>
-          <Text style={textStyle}>{title}</Text>
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          buttonStyle,
+          {
+            backgroundColor: isDisabled
+              ? palette.controlDisabled
+              : pressed
+                ? pressedButtonBgColor
+                : defaultButtonBgColor,
+            opacity: isDisabled ? 0.55 : 1,
+            transform: [{ scale: pressed && !isDisabled ? 0.985 : 1 }],
+          },
+        ]}
+        onPress={onPress}
+        disabled={isDisabled}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: iconName ? 7 : 0,
+              maxWidth: '100%',
+            }}
+          >
+            {iconName ? (
+              <Ionicons
+                name={iconName}
+                size={iconSize}
+                color={iconColor ?? palette.text}
+              />
+            ) : null}
+            <Text
+              style={textStyle}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              {title}
+            </Text>
+          </View>
         </Pressable>
       )
   }
   /* */
   const LineBreak = () => {
     return(
-      <View style={{ height: 1, backgroundColor: palette.border, marginHorizontal: 6 }}/>
+      <View style={{ height: 1, backgroundColor: palette.separator, marginHorizontal: 8, opacity: 0.72 }}/>
     )
   }
   
   const VerticalLineBreak = () => {
     return (
-      <View style={{ width: 1 , height: '100%', backgroundColor: palette.border, marginHorizontal: 10 }} />
+      <View style={{ width: 1 , height: '100%', backgroundColor: palette.separator, marginHorizontal: 10, opacity: 0.72 }} />
     )
   }
 
@@ -53,7 +91,10 @@ import { palette } from '../styles'
     pDefaultButtonBgColor, 
     pPressedButtonBgColor, 
     onPress,
-    isDisabled
+    isDisabled,
+    iconName,
+    iconColor,
+    iconSize
     }: 
     types.ButtonProps) => {
       return(
@@ -64,7 +105,10 @@ import { palette } from '../styles'
         pDefaultButtonBgColor={pDefaultButtonBgColor} 
         pPressedButtonBgColor={pPressedButtonBgColor} 
         onPress={onPress}
-        isDisabled={isDisabled}>
+        isDisabled={isDisabled}
+        iconName={iconName}
+        iconColor={iconColor}
+        iconSize={iconSize}>
         </Button>   
       )
     }

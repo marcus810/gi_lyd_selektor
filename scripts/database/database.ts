@@ -1,4 +1,4 @@
-import { TemplateInfo, InputInfo, IntercomInfo, TemplateProfilePayload } from "../types"; // Adjust the import path if necessary
+import { TemplateInfo, InputInfo, IntercomInfo, TemplateProfilePayload, FloorPlanInfo, FloorPlanMarker } from "../types"; // Adjust the import path if necessary
 import { router } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
@@ -48,6 +48,39 @@ const toBackendBoolean = (value: any): boolean =>
     value === "1" ||
     String(value).toLowerCase() === "true";
 
+const normalizeFloorPlanMarker = (marker: any): FloorPlanMarker | null => {
+  const type = marker?.type === "output" ? "output" : marker?.type === "input" ? "input" : null;
+  const id = Number(marker?.id);
+  const port = Number(marker?.port);
+  const x = Number(marker?.x);
+  const y = Number(marker?.y);
+
+  if (!type || !Number.isFinite(id) || id <= 0 || !Number.isFinite(port) || port <= 0) {
+    return null;
+  }
+
+  return {
+    id: Math.round(id),
+    type,
+    port: Math.round(port),
+    x: Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0.5,
+    y: Number.isFinite(y) ? Math.max(0, Math.min(1, y)) : 0.5,
+    label: String(marker?.label ?? ""),
+  };
+};
+
+const normalizeFloorPlan = (floorPlan: any): FloorPlanInfo => ({
+  image: String(floorPlan?.image ?? ""),
+  imageName: String(floorPlan?.imageName ?? ""),
+  imageWidth: Math.max(0, Math.round(Number(floorPlan?.imageWidth) || 0)),
+  imageHeight: Math.max(0, Math.round(Number(floorPlan?.imageHeight) || 0)),
+  markers: Array.isArray(floorPlan?.markers)
+    ? floorPlan.markers
+        .map(normalizeFloorPlanMarker)
+        .filter((marker: FloorPlanMarker | null): marker is FloorPlanMarker => marker !== null)
+    : [],
+});
+
 const SOCKET_HEARTBEAT_INTERVAL_MS = 5_000;
 const SOCKET_WATCHDOG_INTERVAL_MS = 2_500;
 const SOCKET_STALE_AFTER_MS = 15_000;
@@ -82,6 +115,7 @@ export class DatabaseHandler {
     public chosenTemplateSetter: React.Dispatch<React.SetStateAction<TemplateInfo | undefined>> | null
     public intercomOmniListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
     public intercomGroupListSetter: React.Dispatch<React.SetStateAction<IntercomInfo[]>> | null
+    public floorPlanSetter: React.Dispatch<React.SetStateAction<FloorPlanInfo>> | null
     public toggleIntercoms: ((activatedIntercoms: IntercomInfo[]) => void | null) | undefined
     public toggleInputs: ((activatedInputs: InputInfo[]) => void | undefined) | undefined
     public timecodeSetter: ((newTimecode: string) => void) | null
@@ -148,6 +182,7 @@ export class DatabaseHandler {
       this.chosenTemplateSetter = null
       this.intercomOmniListSetter = null
       this.intercomGroupListSetter = null
+      this.floorPlanSetter = null
       this.remoteStream = null
       this.timecodeSetter = null
       this.localStream = null
@@ -1180,8 +1215,12 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             
 
 
+            const peerConnectionEvents = peerConnection as unknown as {
+              addEventListener: (type: string, listener: (event: any) => void) => void;
+            };
+
             // Handle local ICE candidates
-            peerConnection.addEventListener('icecandidate', (e: RTCIceCandidateEvent<'icecandidate'>) => {
+            peerConnectionEvents.addEventListener('icecandidate', (e: RTCIceCandidateEvent<'icecandidate'>) => {
               console.log("[RTC] local ICE", { has: !!e.candidate, state: AppState.currentState });
 
               if (
@@ -1201,7 +1240,7 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
             });
             
             // Handle remote audio
-            peerConnection.addEventListener('track', async (e: any) => {
+            peerConnectionEvents.addEventListener('track', async (e: any) => {
               if (e.track && this.pc === peerConnection) {
                 this.remoteAudioTrack = e.track;
                 console.log("Remote track kind", e.track.kind);
@@ -1434,13 +1473,18 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
               router.dismissTo("/");
             }
             if (msg.action === "live_update") {
-                if (this.socket && this.socket.readyState === WebSocket.OPEN && 
-                    this.chosenTemplateSetter && 
-                    this.inputInfoListSetter && 
-                    this.intercomInfoListSetter && 
-                    this.intercomOmniListSetter &&
-                    this.intercomGroupListSetter)
-                    {
+                if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                    if (msg.floorPlan && this.floorPlanSetter) {
+                        this.floorPlanSetter(normalizeFloorPlan(msg.floorPlan));
+                    }
+
+                    if (
+                        this.chosenTemplateSetter &&
+                        this.inputInfoListSetter &&
+                        this.intercomInfoListSetter &&
+                        this.intercomOmniListSetter &&
+                        this.intercomGroupListSetter
+                    ) {
                     if (msg.inputs){
                         const inputInfoList: InputInfo[] = msg.inputs.map((input: any) => ({
                             port: input.port,
@@ -1459,6 +1503,7 @@ public async connectSelectorSocket(uuid: string | null = null, isReconnect: bool
                     }
 
 
+                    }
                 }
             }
         };
@@ -1726,7 +1771,8 @@ public async getTemplateFromUuid(uuid: string): Promise<[boolean, TemplateInfo |
             isTabMaster: template.isTabMaster,
             isSlave: template.isSlave,
             slaveColor: template.slaveColor,
-            listenDisabled: toBackendBoolean(template.listenDisabled)
+            listenDisabled: toBackendBoolean(template.listenDisabled),
+            isFloorPlan: toBackendBoolean(template.isFloorPlan)
         };
     }
 
@@ -2054,6 +2100,24 @@ public async sendOutputOff(
     this.sendMessage(msg);
 }
 
+public async sendFloorPlanOutputOn(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "floor_plan_output_on",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
+public async sendFloorPlanOutputOff(templateInfo: TemplateInfo, port: number): Promise<void> {
+    const msg = {
+        action: "floor_plan_output_off",
+        template: templateInfo,
+        port: port,
+    };
+    this.sendMessage(msg);
+}
+
 // Send Output On Omni
 public async sendOutputOnOmni(templateInfo: TemplateInfo | undefined, ports: number[] | undefined): Promise<void> {
     const msg = {
@@ -2226,6 +2290,18 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
         }));
     }
 
+    public async fetchFloorPlan(): Promise<FloorPlanInfo> {
+        const message = await this.requestMessage<any>(
+            {
+                action: "get_floor_plan",
+                template: this.templateInfo ?? {}
+            },
+            "get_floor_plan"
+        );
+
+        return normalizeFloorPlan(message.floorPlan);
+    }
+
     public async fetchActivatedIntercoms(): Promise<IntercomInfo[]> {
         const message = await this.requestMessage<any>(
             {
@@ -2290,7 +2366,8 @@ public async sendOutputOffOmni(templateInfo: TemplateInfo | undefined, ports: nu
             isTabMaster: template.isTabMaster,
             isSlave: template.isSlave,
             slaveColor: template.slaveColor,
-            listenDisabled: toBackendBoolean(template.listenDisabled)
+            listenDisabled: toBackendBoolean(template.listenDisabled),
+            isFloorPlan: toBackendBoolean(template.isFloorPlan)
         }));
     }
   

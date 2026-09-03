@@ -1,4 +1,4 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -9,9 +9,9 @@ import { Dimensions, Platform } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Device from 'expo-device';
-import { useColorScheme } from '@/hooks/useColorScheme';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { palette } from '../scripts/styles';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -22,6 +22,19 @@ function isAndroidTablet() {
 }
 
 const TABLET_KEEP_AWAKE_TAG = 'ProSelectorTabletKeepAwake';
+
+const ProSelectorDarkTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    primary: palette.primary,
+    background: palette.appBg,
+    card: palette.chrome,
+    text: palette.text,
+    border: palette.separator,
+    notification: palette.danger,
+  },
+};
 
 async function isTabletDevice() {
   try {
@@ -38,7 +51,6 @@ async function isTabletDevice() {
 }
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
@@ -97,7 +109,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <ThemeProvider value={ProSelectorDarkTheme}>
         <Stack>
           <Stack.Screen name="+not-found" />
           <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -106,7 +118,7 @@ export default function RootLayout() {
           <Stack.Screen name="selector_choice" options={{ headerShown: false }} />
           <Stack.Screen name="listener_selector" options={{ headerShown: false }} />
         </Stack>
-        <StatusBar style="auto" />
+        <StatusBar style="light" backgroundColor={palette.appBg} />
       </ThemeProvider>
     </SafeAreaProvider>
   );

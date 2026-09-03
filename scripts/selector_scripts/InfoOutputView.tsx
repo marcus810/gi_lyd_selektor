@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, Image, Pressable, Modal, Button, StyleSheet } from "react-native";
+import { View, Text, Image, Pressable, Modal, StyleSheet } from "react-native";
+import Ionicons from '@expo/vector-icons/Ionicons';
 import Slider from "@react-native-community/slider";
 import { DatabaseHandler } from "@/scripts/database/database";
 import * as misc from "../misc";
@@ -32,6 +33,41 @@ const ALERT_REFRESH_THROTTLE_MS = 1000;
 const ALERT_COLOR = styles.palette.warning; // yellow-ish alert color
 
 const HELD_CLEAR_MS = 3 * 60 * 1000;
+
+const ModalActionButton = ({
+  title,
+  onPress,
+}: {
+  title: string;
+  onPress: () => void;
+}) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => [
+      styles.generalStyles.button,
+      {
+        flex: 0,
+        minWidth: 128,
+        maxWidth: 180,
+        minHeight: 42,
+        paddingHorizontal: 14,
+        backgroundColor: styles.palette.primary,
+        borderWidth: 0,
+      },
+      pressed && {
+        backgroundColor: styles.palette.primaryPressed,
+        transform: [{ scale: 0.985 }],
+      },
+    ]}
+  >
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 }}>
+      <Ionicons name="close-circle-outline" size={17} color={styles.palette.text} />
+      <Text style={[styles.generalStyles.text, { fontSize: 13 }]} numberOfLines={1}>
+        {title}
+      </Text>
+    </View>
+  </Pressable>
+);
 
 
 const InfoOutputView: React.FC<InfoOutputViewProps> = ({
@@ -474,7 +510,7 @@ useEffect(() => {
 
   const inputIsOn = isOnFor(inputIntercom);
   const baseColor = inputIsOn
-    ? "rgba(55, 70, 62, 0.96)" // lighter gray when input active
+    ? styles.palette.panelRaised
     : inputBg ?? defaultBase;
 
 
@@ -491,7 +527,17 @@ useEffect(() => {
   const clamped = Math.max(0, Math.min(1, displayedVolume ?? 0));
   const fillWidth = `${Math.round(clamped * 100)}%`;
   // semi-transparent green
-  const fillColor = "rgba(41, 205, 111, 0.58)";
+  const fillColor = "rgba(48, 209, 88, 0.48)";
+  const tileAccentColor = inputInBoth
+    ? styles.palette.violet
+    : inputInOmni
+      ? styles.palette.cyan
+      : inputInGroup
+        ? styles.palette.magenta
+        : outputIntercom
+          ? styles.palette.primary
+          : styles.palette.highlight;
+  const tileGlowColor = inputIsOn ? styles.palette.greenSolid : tileAccentColor;
 
 
   
@@ -512,7 +558,24 @@ useEffect(() => {
   if (isTablet) return (
     <>
       {/* Outer wrapper — we draw the shared background + left→right fill here */}
-      <View style={[outerViewStyle, { borderRadius: 8, flexDirection: "row", padding: 4,  minWidth: misc.getLandscapeWidth() / 8,height: "50%" }]}>
+      <View
+        style={[
+          outerViewStyle,
+          localstyles.intercomTileShadow,
+          {
+            borderRadius: 8,
+            flexDirection: "row",
+            padding: 5,
+            minWidth: misc.getLandscapeWidth() / 8,
+            height: "50%",
+            shadowColor: tileGlowColor,
+            shadowOpacity: inputIsOn ? 0.42 : 0.24,
+            shadowRadius: inputIsOn ? 18 : 12,
+            shadowOffset: { width: 0, height: inputIsOn ? 8 : 5 },
+            elevation: inputIsOn ? 8 : 4,
+          },
+        ]}
+      >
         {/* --- inside the tablet branch: container view --- */}
         <View
           style={[
@@ -521,19 +584,39 @@ useEffect(() => {
               // combined container background (shared by both halves)
               backgroundColor: displayBaseColor,
               borderRadius: 8,
-              borderColor: styles.palette.borderStrong,
+              borderColor: inputIsOn ? styles.palette.greenSolid : styles.palette.highlight,
               borderWidth: 1,
               position: "relative",
               overflow: "hidden",
               flexDirection: "row",
               height: "100%",
+              shadowColor: tileGlowColor,
+              shadowOpacity: inputIsOn ? 0.38 : 0.18,
+              shadowRadius: inputIsOn ? 16 : 10,
+              shadowOffset: { width: 0, height: inputIsOn ? 7 : 4 },
+              elevation: inputIsOn ? 7 : 3,
             },
           ]}
         >
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 3,
+              backgroundColor: tileAccentColor,
+              zIndex: 4,
+            }}
+          />
           {/* LEFT = OUTPUT */}
           {leftExists && (
             <Pressable
-              style={{ flex: leftFlex, backgroundColor: styles.palette.controlSoft }}
+              style={({ pressed }) => [
+                { flex: leftFlex, backgroundColor: styles.palette.panel },
+                pressed ? localstyles.intercomHalfPressed : null,
+              ]}
               onLongPress={() => openModalFor("output", outputVolume)}
               delayLongPress={300}
               
@@ -546,7 +629,7 @@ useEffect(() => {
                   borderTopLeftRadius: 8,
                   borderBottomLeftRadius: 8,
                   borderRightWidth: 1,
-                  borderColor: styles.palette.borderStrong,
+                  borderColor: styles.palette.separator,
 
                 }}
               >
@@ -602,7 +685,10 @@ useEffect(() => {
           {/* RIGHT = INPUT */}
           {rightExists && (
             <Pressable
-              style={{ flex: rightFlex }}
+              style={({ pressed }) => [
+                { flex: rightFlex },
+                pressed ? localstyles.intercomHalfPressed : null,
+              ]}
               onPress={() => {
                 if (isAlertingRef.current || isHeldAlertRef.current) {
                       cancelAlert();
@@ -723,7 +809,7 @@ useEffect(() => {
               }}
               step={0.01}
             />
-            <Button title="Close" onPress={() => setModalVisible(false)} />
+            <ModalActionButton title="Close" onPress={() => setModalVisible(false)} />
           </View>
         </View>
 
@@ -735,7 +821,21 @@ useEffect(() => {
   else return (
         <>
       {/* Outer wrapper — we draw the shared background + left→right fill here */}
-      <View style={[outerViewStyle, { borderRadius: 8 }]}>
+      <View
+        style={[
+          outerViewStyle,
+          localstyles.intercomTileShadow,
+          {
+            borderRadius: 8,
+            padding: 3,
+            shadowColor: tileGlowColor,
+            shadowOpacity: inputIsOn ? 0.42 : 0.24,
+            shadowRadius: inputIsOn ? 18 : 12,
+            shadowOffset: { width: 0, height: inputIsOn ? 8 : 5 },
+            elevation: inputIsOn ? 8 : 4,
+          },
+        ]}
+      >
         <View
           style={[
             textViewStyle,
@@ -743,19 +843,39 @@ useEffect(() => {
               // combined container background (shared by both halves)
               backgroundColor: displayBaseColor,
               borderRadius: 8,
-              borderColor: styles.palette.borderStrong,
+              borderColor: inputIsOn ? styles.palette.greenSolid : styles.palette.highlight,
               borderWidth: 1,
               position: "relative",
               overflow: "hidden",
               flexDirection: "row",
               height: "100%",
+              shadowColor: tileGlowColor,
+              shadowOpacity: inputIsOn ? 0.38 : 0.18,
+              shadowRadius: inputIsOn ? 16 : 10,
+              shadowOffset: { width: 0, height: inputIsOn ? 7 : 4 },
+              elevation: inputIsOn ? 7 : 3,
             },
           ]}
         >
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 3,
+              backgroundColor: tileAccentColor,
+              zIndex: 4,
+            }}
+          />
           {/* LEFT = OUTPUT */}
           {leftExists && (
             <Pressable
-              style={{ flex: leftFlex, backgroundColor: styles.palette.controlSoft }}
+              style={({ pressed }) => [
+                { flex: leftFlex, backgroundColor: styles.palette.panel },
+                pressed ? localstyles.intercomHalfPressed : null,
+              ]}
               onLongPress={() => openModalFor("output", outputVolume)}
               delayLongPress={300}
             >
@@ -766,7 +886,7 @@ useEffect(() => {
                   borderTopLeftRadius: 8,
                   borderBottomLeftRadius: 8,
                   borderRightWidth: 1,
-                  borderColor: styles.palette.borderStrong,
+                  borderColor: styles.palette.separator,
                 }}
               >
               {alertBlinkEnabled && isAlerting && blinkOn && (
@@ -819,7 +939,10 @@ useEffect(() => {
           {/* RIGHT = INPUT */}
           {rightExists && (
             <Pressable
-              style={{ flex: rightFlex }}
+              style={({ pressed }) => [
+                { flex: rightFlex },
+                pressed ? localstyles.intercomHalfPressed : null,
+              ]}
               onPress={() => {
                   if (isAlertingRef.current || isHeldAlertRef.current) {
                     cancelAlert();
@@ -940,7 +1063,7 @@ useEffect(() => {
               }}
               step={0.01}
             />
-            <Button title="Close" onPress={() => setModalVisible(false)} />
+            <ModalActionButton title="Close" onPress={() => setModalVisible(false)} />
           </View>
         </View>
       </Modal>
@@ -952,6 +1075,17 @@ useEffect(() => {
 export default InfoOutputView;
 
 const localstyles = StyleSheet.create({
+  intercomTileShadow: {
+    shadowColor: '#000',
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 4,
+  },
+  intercomHalfPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.992 }],
+  },
   modalOverlay: {
     ...styles.modalStyles.overlay,
   },

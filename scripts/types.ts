@@ -60,6 +60,26 @@ export type TemplateInfo = {
   isSlave: boolean
   slaveColor: string
   listenDisabled?: boolean
+  isFloorPlan?: boolean
+}
+
+export type FloorPlanMarkerType = "input" | "output"
+
+export type FloorPlanMarker = {
+  id: number
+  type: FloorPlanMarkerType
+  port: number
+  x: number
+  y: number
+  label: string
+}
+
+export type FloorPlanInfo = {
+  image: string
+  imageName: string
+  imageWidth: number
+  imageHeight: number
+  markers: FloorPlanMarker[]
 }
 
 export type TemplateProfile = {

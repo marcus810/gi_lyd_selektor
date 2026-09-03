@@ -1,77 +1,65 @@
-
-
-/* libraries */
-import { View, Text } from 'react-native'
+import { View, Text, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Alert } from 'react-native';  // To show alerts
-/* our files */
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import { Alert } from 'react-native'
+import { BlurView } from 'expo-blur'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import * as styles from '../scripts/styles'
-import DropDownPicker from 'react-native-dropdown-picker';
+import DropDownPicker from 'react-native-dropdown-picker'
 import * as generalComponent from '../scripts/general_scripts/custom_components'
 import * as types from '../scripts/types'
 import { DatabaseHandler } from '@/scripts/database/database'
 import { useRouter } from 'expo-router'
 import React, { useState, useEffect } from 'react'
-import * as Device from 'expo-device';
-
-
-
+import * as Device from 'expo-device'
 
 const ListenerSelector = () => {
-  const router = useRouter();
-  const db = DatabaseHandler.getInstance();
+  const router = useRouter()
+  const db = DatabaseHandler.getInstance()
 
-  // Raw list from the database
-  const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([]);
-  const [currentTemplate, setCurrentTemplate] = useState<types.TemplateInfo>();
-
-  // DropDownPicker states
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState<number | null>(null);
-  const [items, setItems] = useState<Array<{ label: string; value: number }>>([]);
-
-  // Toggle state: false → not listening (button says "Listen"), true → listening (button says "Mute")
-  const [isListening, setIsListening] = useState(!db.isMuted);
-  const [isTablet, setIsTablet] = useState(false);
+  const [templateInfoList, setTemplateInfoList] = useState<types.TemplateInfo[]>([])
+  const [currentTemplate, setCurrentTemplate] = useState<types.TemplateInfo>()
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState<number | null>(null)
+  const [items, setItems] = useState<Array<{ label: string; value: number }>>([])
+  const [isListening, setIsListening] = useState(!db.isMuted)
+  const [isTablet, setIsTablet] = useState(false)
 
   useEffect(() => {
-    let redirectTimer: ReturnType<typeof setTimeout> | null = null;
-    const fetchDeviceType = async () => {
-      const type = await Device.getDeviceTypeAsync();
-      setIsTablet(type === Device.DeviceType.TABLET);
-    };
+    let redirectTimer: ReturnType<typeof setTimeout> | null = null
 
-    fetchDeviceType();
-    
+    const fetchDeviceType = async () => {
+      const type = await Device.getDeviceTypeAsync()
+      setIsTablet(type === Device.DeviceType.TABLET)
+    }
+
+    fetchDeviceType()
+
     const fetchData = async () => {
       try {
-        const templates = await db.fetchTemplates();
-        setTemplateInfoList(templates);
+        const templates = await db.fetchTemplates()
+        setTemplateInfoList(templates)
 
-
-        // Build the items array for DropDownPicker
         const ddItems = templates.map((t) => ({
           label: t.name,
           value: t.id,
-        }));
-        const programItem = { label: "PGM", value: -1 };
-        setItems([programItem, ...ddItems]);
+        }))
+        const programItem = { label: "PGM", value: -1 }
+        setItems([programItem, ...ddItems])
 
-        // Optionally default-select the first one
         if (ddItems.length > 0) {
-          setValue(-1);
+          setValue(-1)
           console.log(
             `Default template selected on load: ID=${ddItems[0].value}, name=${ddItems[0].label}`
-          );
+          )
         }
       } catch (error) {
-        console.warn('Error fetching templates:', error);
+        console.warn('Error fetching templates:', error)
       }
-    };
-    fetchData();
+    }
+    fetchData()
 
-    const goToIndexScreen = () => router.dismissTo('/');
+    const goToIndexScreen = () => router.dismissTo('/')
 
     const handleSocketDisconnect = () => {
       redirectTimer = setTimeout(() => {
@@ -79,41 +67,39 @@ const ListenerSelector = () => {
           'Failed to Reconnect',
           'The connection could not be restored. You will be redirected to the main screen.',
           [{ text: 'OK', onPress: () => goToIndexScreen() }]
-        );
-      }, 500);
-    };
-    const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect);
+        )
+      }, 500)
+    }
+    const removeDisconnectHandler = db.onSocketDisconnect(handleSocketDisconnect)
 
     return () => {
-      removeDisconnectHandler();
+      removeDisconnectHandler()
       if (redirectTimer !== null) {
-        clearTimeout(redirectTimer);
+        clearTimeout(redirectTimer)
       }
-      db.closeSocket();
-    };
-    
-  }, []);
+      db.closeSocket()
+    }
+  }, [])
 
   const goToIndexScreen = () => {
     db.listenerExit(currentTemplate)
-    router.dismissTo('/');
-  };
+    router.dismissTo('/')
+  }
 
-  // Called whenever the user picks a different value
   const onValueChange = async (selectedId: number | null) => {
-    setValue(selectedId);
+    setValue(selectedId)
     if (selectedId === null) {
-      console.log('No template selected');
-      return;
+      console.log('No template selected')
+      return
     }
-    const chosenTemplate = templateInfoList.find((t) => t.id === selectedId);
+    const chosenTemplate = templateInfoList.find((t) => t.id === selectedId)
     if (chosenTemplate) {
-      console.log(`Template picked: ID=${chosenTemplate.id}, name=${chosenTemplate.name}`);
+      console.log(`Template picked: ID=${chosenTemplate.id}, name=${chosenTemplate.name}`)
       setCurrentTemplate(chosenTemplate)
       await db.listenerJoin(chosenTemplate)
-    } 
-    else if (selectedId === -1){
-      const fakeTemplate = { id: -1,
+    } else if (selectedId === -1) {
+      const fakeTemplate = {
+        id: -1,
         name: "",
         noDelayPort: 0,
         delayPort: 0,
@@ -125,7 +111,7 @@ const ListenerSelector = () => {
         omniName: "",
         groupState: false,
         groupName: "",
-        deviceUuid:"",
+        deviceUuid: "",
         deviceExpiryDate: "",
         lastActivationUtc: "",
         autoDuck: false,
@@ -135,155 +121,303 @@ const ListenerSelector = () => {
         isMaster: false,
         isTabMaster: false,
         isSlave: false,
-        slaveColor: "" }
-        setCurrentTemplate(fakeTemplate)
-        await db.listenerJoin(fakeTemplate)
+        slaveColor: "",
+      }
+      setCurrentTemplate(fakeTemplate)
+      await db.listenerJoin(fakeTemplate)
+    } else {
+      console.log(`Template picked: ID=${selectedId}`)
     }
-    else {
-      console.log(`Template picked: ID=${selectedId}`);
-    }
+  }
 
-
-  };
-
-  // Toggle between listening and muted
   const handleToggle = () => {
     setIsListening((prev) => {
-      const next = !prev;
-      if (next) { 
+      const next = !prev
+      if (next) {
         db.isMuted = false
         db.playRemoteStream()
-        console.log('Now Listening');
+        console.log('Now Listening')
       } else {
         db.isMuted = true
         db.playRemoteStream()
-        console.log('Muted');
+        console.log('Muted')
       }
-      return next;
-    });
-  };
+      return next
+    })
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.generalStyles.safeContainer}>
-        <View style={styles.templateSelectorStyles.container}>
-          <View style={styles.templateSelectorStyles.header}>
-            <View style={styles.templateSelectorStyles.headerSide}>
+        <View style={localStyles.screen}>
+          <View pointerEvents="none" style={localStyles.backdropLayer}>
+            <View style={localStyles.primaryBand} />
+            <View style={localStyles.coralBand} />
+            <View style={localStyles.amberBand} />
+          </View>
+
+          <BlurView intensity={44} tint="dark" style={localStyles.topBar}>
+            <View style={localStyles.topBarSide}>
               {generalComponent.getButton({
-                title: 'Go Back',
-                pDefaultButtonBgColor: styles.palette.control,
+                title: 'Back',
+                pDefaultButtonBgColor: styles.palette.controlSoft,
                 pPressedButtonBgColor: styles.palette.controlPressed,
                 buttonStyle: styles.templateSelectorStyles.button,
                 textStyle: styles.generalStyles.text,
+                iconName: "chevron-back",
+                iconSize: 17,
                 onPress: () => goToIndexScreen(),
               })}
             </View>
-            <View style={styles.templateSelectorStyles.headerCenter} />
-            <View style={styles.templateSelectorStyles.headerSide} />
-          </View>
+            <View style={localStyles.topBarCenter}>
+              <Text style={[localStyles.topTitle, { fontSize: isTablet ? 32 : 23 }]}>
+                Listener
+              </Text>
+            </View>
+            <View style={localStyles.topBarSide} />
+          </BlurView>
 
-          {/* ───── Fully Centered Drop-down + Toggle Button ───── */}
-          <View
-            style={{
-              flex: 1,
-              justifyContent: 'center',
-              alignItems: 'center',
-              paddingHorizontal: 16,
-            }}
-          >
-            {/* “Select Template” label, centered */}
-            <Text
-              style={[
-                styles.generalStyles.text,
-                { marginBottom: 12, textAlign: 'center'}, !isTablet ? { fontSize:  30} : { fontSize:  50},
-              ]}
+          <View style={localStyles.body}>
+            <BlurView
+              intensity={36}
+              tint="dark"
+              style={[localStyles.listenerDeck, { width: isTablet ? '62%' : '90%' }]}
             >
-              Select Template:
-            </Text>
+              <View style={[localStyles.statusBadge, { borderColor: isListening ? styles.palette.greenSolid : styles.palette.danger }]}>
+                <Ionicons
+                  name={isListening ? "volume-high-outline" : "volume-mute-outline"}
+                  size={isTablet ? 48 : 38}
+                  color={isListening ? styles.palette.greenSolid : styles.palette.danger}
+                />
+              </View>
 
-            {/* Wrapper to force dropdown width to 50% of parent */}
-            <View style={{ width: isTablet ? '50%' : '72%', zIndex: 10 }}>
-              <DropDownPicker
-                open={open}
-                value={value}
-                items={items}
-                setOpen={setOpen}            // actual setState from useState
-                setValue={setValue}          // actual setState from useState
-                setItems={setItems}          // actual setState from useState
-                onChangeValue={onValueChange}
-                placeholder="Pick a template…"
-                showTickIcon={false}
-                itemSeparator={true}
+              <Text
+                style={[localStyles.deckTitle, { fontSize: isTablet ? 48 : 34 }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.74}
+              >
+                Select Template
+              </Text>
 
-                scrollViewProps={{
-                  nestedScrollEnabled: true,
-                }}
-                showArrowIcon={false}
-                style={{
-                  borderColor: styles.palette.borderStrong,
-                  backgroundColor: styles.palette.panelRaised,
-                  width: '100%',
-                  minHeight: 54,
-                  borderRadius: 8,
-                }}
-                dropDownContainerStyle={{
-                  borderColor: styles.palette.borderStrong,
-                  backgroundColor: styles.palette.panelRaised,
-                  width: '100%',
-                  borderRadius: 8,
-                }}
-                labelStyle={[
-                  {textAlign: 'center', color: styles.palette.text,
-                  }, !isTablet ? { fontSize:  20} : { fontSize:  30}
-                ]}
-                placeholderStyle={[
-                  {textAlign: 'center', color: styles.palette.textMuted,
-                  }, !isTablet ? { fontSize:  20} : { fontSize:  30}
-                ]}
-                textStyle={[styles.generalStyles.text,
-                  {textAlign: 'center',
-                  color: styles.palette.text}, !isTablet ? { fontSize:  20} : { fontSize:  30}
-                ]}
-                listItemLabelStyle={{
-                  color: styles.palette.text,
-                  textAlign: 'center',
-                }}
-                selectedItemContainerStyle={{
-                  backgroundColor: styles.palette.controlPressed,
-                }}
-                itemSeparatorStyle={{
-                  backgroundColor: styles.palette.border,
-                }}
-              />
-            </View>
+              <View style={localStyles.dropdownShell}>
+                <DropDownPicker
+                  open={open}
+                  value={value}
+                  items={items}
+                  setOpen={setOpen}
+                  setValue={setValue}
+                  setItems={setItems}
+                  onChangeValue={onValueChange}
+                  placeholder="Pick a template..."
+                  showTickIcon={false}
+                  itemSeparator
+                  scrollViewProps={{
+                    nestedScrollEnabled: true,
+                  }}
+                  showArrowIcon={false}
+                  style={localStyles.dropdown}
+                  dropDownContainerStyle={localStyles.dropdownList}
+                  labelStyle={[
+                    localStyles.dropdownText,
+                    { fontSize: isTablet ? 28 : 19 },
+                  ]}
+                  placeholderStyle={[
+                    localStyles.dropdownText,
+                    { color: styles.palette.textMuted, fontSize: isTablet ? 28 : 19 },
+                  ]}
+                  textStyle={[
+                    styles.generalStyles.text,
+                    { color: styles.palette.text, textAlign: 'center', fontSize: isTablet ? 28 : 19 },
+                  ]}
+                  listItemLabelStyle={localStyles.listItemLabel}
+                  selectedItemContainerStyle={localStyles.selectedItem}
+                  itemSeparatorStyle={localStyles.itemSeparator}
+                />
+              </View>
 
-            {/* Toggle button below the dropdown */}
-            <View style={{ marginTop: 20 }}>
-              {generalComponent.getButton({
-                title: isListening ? 'Mute' : 'Listen',
-                pDefaultButtonBgColor: isListening ? styles.palette.danger : styles.palette.control,
-                pPressedButtonBgColor: styles.palette.controlPressed,
-                buttonStyle: {
-                  paddingHorizontal: 20,
-                  paddingVertical: 12,
-                  borderRadius: 8,
-                  minWidth: 150,
-                  alignItems: 'center',
-                  borderWidth: 1,
-                  borderColor: styles.palette.borderStrong,
-                },
-                textStyle: {...styles.generalStyles.text,
-                  color: '#fff',
-                  fontSize: 16,
-                },
-                onPress: handleToggle,
-              })}
-            </View>
+              <View style={localStyles.actionRow}>
+                {generalComponent.getButton({
+                  title: isListening ? 'Mute' : 'Listen',
+                  pDefaultButtonBgColor: isListening ? styles.palette.danger : styles.palette.primary,
+                  pPressedButtonBgColor: isListening ? styles.palette.dangerActive : styles.palette.primaryPressed,
+                  iconName: isListening ? "volume-mute-outline" : "volume-high-outline",
+                  iconSize: 21,
+                  buttonStyle: localStyles.listenButton,
+                  textStyle: localStyles.listenButtonText,
+                  onPress: handleToggle,
+                })}
+              </View>
+            </BlurView>
           </View>
         </View>
       </SafeAreaView>
     </GestureHandlerRootView>
-  );
-};
+  )
+}
 
-export default ListenerSelector;
+export default ListenerSelector
+
+const localStyles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: styles.palette.appBg,
+    overflow: 'hidden',
+  },
+  backdropLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  primaryBand: {
+    position: 'absolute',
+    left: -52,
+    top: 92,
+    width: '66%',
+    height: 70,
+    borderRadius: 8,
+    backgroundColor: styles.palette.primarySoft,
+    transform: [{ rotate: '-12deg' }],
+  },
+  coralBand: {
+    position: 'absolute',
+    right: -34,
+    top: '34%',
+    width: '54%',
+    height: 70,
+    borderRadius: 8,
+    backgroundColor: styles.palette.coralSoft,
+    transform: [{ rotate: '15deg' }],
+  },
+  amberBand: {
+    position: 'absolute',
+    left: '12%',
+    bottom: '15%',
+    width: '76%',
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: styles.palette.amberSoft,
+    transform: [{ rotate: '6deg' }],
+  },
+  topBar: {
+    height: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: styles.palette.separator,
+    backgroundColor: styles.palette.chrome,
+    overflow: 'hidden',
+  },
+  topBarSide: {
+    width: 104,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topTitle: {
+    color: styles.palette.text,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0,
+  },
+  body: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  listenerDeck: {
+    maxWidth: 620,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(23,25,34,0.86)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: styles.palette.highlight,
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+    overflow: 'visible',
+    shadowColor: styles.palette.primary,
+    shadowOpacity: 0.24,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 7,
+  },
+  statusBadge: {
+    width: 82,
+    height: 82,
+    borderRadius: 8,
+    borderWidth: 2,
+    backgroundColor: styles.palette.panelDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deckTitle: {
+    color: styles.palette.text,
+    fontWeight: '800',
+    letterSpacing: 0,
+    marginBottom: 18,
+  },
+  dropdownShell: {
+    width: '100%',
+    zIndex: 10,
+  },
+  dropdown: {
+    borderColor: styles.palette.highlight,
+    backgroundColor: styles.palette.panelDeep,
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 8,
+  },
+  dropdownList: {
+    borderColor: styles.palette.highlight,
+    backgroundColor: styles.palette.panelDeep,
+    width: '100%',
+    borderRadius: 8,
+  },
+  dropdownText: {
+    color: styles.palette.text,
+    textAlign: 'center',
+    fontWeight: '800',
+    letterSpacing: 0,
+  },
+  listItemLabel: {
+    color: styles.palette.text,
+    textAlign: 'center',
+  },
+  selectedItem: {
+    backgroundColor: styles.palette.primarySoft,
+  },
+  itemSeparator: {
+    backgroundColor: styles.palette.separator,
+  },
+  actionRow: {
+    width: '100%',
+    marginTop: 18,
+  },
+  listenButton: {
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
+    paddingHorizontal: 18,
+    shadowColor: styles.palette.primary,
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
+  },
+  listenButtonText: {
+    color: styles.palette.text,
+    fontSize: 18,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0,
+  },
+})

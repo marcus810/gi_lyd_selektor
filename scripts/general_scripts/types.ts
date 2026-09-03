@@ -1,4 +1,8 @@
+import type Ionicons from '@expo/vector-icons/Ionicons'
+import type { ComponentProps } from 'react'
 import { ViewStyle, TextStyle, StyleProp } from 'react-native'
+
+type IconName = ComponentProps<typeof Ionicons>['name']
 
 export type ButtonProps = {
     title: string
@@ -9,5 +13,7 @@ export type ButtonProps = {
     pPressedButtonBgColor?: string
     onPress?: () => void
     isDisabled?: boolean
+    iconName?: IconName
+    iconColor?: string
+    iconSize?: number
 }
-

@@ -91,14 +91,14 @@ const InfoInputView = (({
     if (isEditingMode) {
       if (isDeleted) {
         return {
-          backgroundColor: '#d62828',
+          backgroundColor: appStyles.palette.danger,
         };
       }
 
       return {
         backgroundColor: isEditSelected
-          ? '#2f80ff'
-          : '#6b7280',
+          ? appStyles.palette.primary
+          : appStyles.palette.panelRaised,
       };
     }
 
@@ -157,12 +157,23 @@ const SlaveColumn = ({
 
   if (bestW === 0 || bestH === 0) {
     return (
-      <Pressable style={[outerViewStyle]} onPress={() => onToggle(port)} onLongPress={onLongPress} delayLongPress={300}>
-        <View style={[imageViewStyle, resolvedSelectedStyle()] }>
+      <Pressable
+        style={({ pressed }) => [
+          outerViewStyle,
+          styles.inputTileShadow,
+          !isEditingMode && isToggled ? styles.activeTile : null,
+          pressed ? styles.tilePressed : null,
+        ]}
+        onPress={() => onToggle(port)}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+      >
+        <View style={[{ position: 'relative' }, imageViewStyle, resolvedSelectedStyle()] }>
           <Image source={imageSource} style={imageStyle} />
+          {!isEditingMode && isToggled ? <View style={styles.activeDot} /> : null}
         </View>
         <View style={[textViewStyle, resolvedSelectedStyle()] }>
-          <Text style={textStyle}>{name}</Text>
+          <Text style={textStyle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{name}</Text>
         </View>
         {templateInfo && templateInfo.isMaster ? (
           <SlaveColumn
@@ -212,7 +223,13 @@ const SlaveColumn = ({
 
   return (
     <Pressable
-      style={[outerViewStyle, tileStyle]}
+      style={({ pressed }) => [
+        outerViewStyle,
+        tileStyle,
+        styles.inputTileShadow,
+        !isEditingMode && isToggled ? styles.activeTile : null,
+        pressed ? styles.tilePressed : null,
+      ]}
       onPress={() => onToggle(port)}
       onLongPress={onLongPress}
       delayLongPress={300}
@@ -225,10 +242,12 @@ const SlaveColumn = ({
       ) : null}
 
 
-      <View style={{ flex: 1, flexDirection: 'column' }}>
+      <View style={{ flex: 1, flexDirection: 'column', position: 'relative' }}>
         <View style={[imageViewStyle, resolvedSelectedStyle()] }>
           <Image source={imageSource} style={imageStyle} />
         </View>
+
+        {!isEditingMode && isToggled ? <View style={styles.activeDot} /> : null}
 
         <View style={[textViewStyle, resolvedSelectedStyle()] }>
           <Text style={textStyle} numberOfLines={1}>{name}</Text>
@@ -273,5 +292,43 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     // default faded look — backgroundColor provided inline
     opacity: 1,
-  }
+  },
+  activeDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 12,
+    height: 12,
+    borderRadius: 8,
+    backgroundColor: appStyles.palette.greenSolid,
+    borderWidth: 2,
+    borderColor: appStyles.palette.text,
+    shadowColor: appStyles.palette.greenSolid,
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  inputTileShadow: {
+    shadowColor: '#000',
+    shadowOpacity: 0.24,
+    shadowRadius: 11,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 4,
+  },
+  activeTile: {
+    shadowColor: appStyles.palette.greenSolid,
+    shadowOpacity: 0.44,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+    zIndex: 2,
+  },
+  tilePressed: {
+    transform: [{ scale: 0.985 }],
+    shadowOpacity: 0.16,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
 });
